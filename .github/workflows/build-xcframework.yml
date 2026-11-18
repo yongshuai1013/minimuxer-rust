@@ -1,0 +1,106 @@
+name: Build MinimuxerRust XCFramework
+
+# M1 pipeline for the Rust rewrite (branch rust-rewrite):
+#   test job        -- host tests for the new crates + workspace check
+#   xcframework job -- release staticlibs for device + simulator,
+#                      assembled into MinimuxerRust.xcframework
+#
+# The legacy crate's own workflow (build.yml) is untouched.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [rust-rewrite]
+    paths:
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/build-xcframework.yml'
+
+jobs:
+  test:
+    name: Test (host) + workspace check
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1.4.1
+        with:
+          xcode-version: '16.2'
+
+      - name: Install Rust targets
+        run: rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
+
+      - name: Install bindgen for aws-lc (legacy crate dependency)
+        run: cargo install --force --locked bindgen-cli
+
+      # NOTE: test scope is the new crates. The legacy root crate's tests
+      # (src/tests.rs) are on-device integration tests driving a real
+      # device over USB/Wi-Fi; they cannot run on a CI host and never
+      # ran in this repo's CI.
+      - name: Cargo test (new crates)
+        run: cargo test -p mm-common -p mm-ffi
+
+      - name: Cargo check (whole workspace, legacy crate included)
+        run: cargo check --workspace
+
+      - name: Cargo check (iOS device target)
+        run: cargo check -p mm-common -p mm-ffi --target aarch64-apple-ios
+
+  xcframework:
+    name: Build MinimuxerRust.xcframework
+    runs-on: macos-15
+    needs: test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1.4.1
+        with:
+          xcode-version: '16.2'
+
+      - name: Install Rust targets
+        run: rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
+
+      - name: Build staticlibs (release)
+        run: |
+          cargo build -p mm-ffi --release --target aarch64-apple-ios
+          cargo build -p mm-ffi --release --target aarch64-apple-ios-sim
+          cargo build -p mm-ffi --release --target x86_64-apple-ios
+
+      - name: Assemble XCFramework
+        run: |
+          set -euo pipefail
+          mkdir -p build/include/minimuxer_rust
+          cp crates/mm-ffi/generated/minimuxer_rust.h build/include/minimuxer_rust/
+          cp crates/mm-ffi/generated/SwiftBridgeCore.h build/include/minimuxer_rust/
+          printf 'module minimuxer_rust {\n\theader "minimuxer_rust.h"\n\theader "SwiftBridgeCore.h"\n\texport *\n}\n' \
+            > build/include/minimuxer_rust/module.modulemap
+          lipo -create \
+            -output build/libminimuxer_rust-sim.a \
+            target/aarch64-apple-ios-sim/release/libminimuxer_rust.a \
+            target/x86_64-apple-ios/release/libminimuxer_rust.a
+          xcodebuild -create-xcframework \
+            -library target/aarch64-apple-ios/release/libminimuxer_rust.a \
+            -headers build/include \
+            -library build/libminimuxer_rust-sim.a \
+            -headers build/include \
+            -output build/MinimuxerRust.xcframework
+          ditto -c -k --keepParent build/MinimuxerRust.xcframework \
+            build/MinimuxerRust.xcframework.zip
+          shasum -a 256 build/MinimuxerRust.xcframework.zip \
+            > build/MinimuxerRust.xcframework.zip.sha256
+          cat build/MinimuxerRust.xcframework.zip.sha256
+
+      - name: Upload XCFramework artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MinimuxerRust.xcframework
+          path: |
+            build/MinimuxerRust.xcframework.zip
+            build/MinimuxerRust.xcframework.zip.sha256
+            crates/mm-ffi/generated/minimuxer_rust.swift
+            crates/mm-ffi/generated/SwiftBridgeCore.swift
