@@ -31,12 +31,6 @@ let package = Package(
         .macOS(.v11),
         .tvOS(.v14)
     ],
-    dependencies: [
-        // Same package and product the Swift package's
-        // LibimobiledeviceGateway links for the C library's
-        // OpenSSL symbols (pair-record key/cert generation).
-        .package(url: "https://github.com/mahee96/RemotePairingKit.git", branch: "main")
-    ],
     products: [
         .library(
             name: "MinimuxerCommon",
@@ -46,6 +40,12 @@ let package = Package(
             name: "MinimuxerRustBindings",
             targets: ["MinimuxerRustBindings"]
         )
+    ],
+    dependencies: [
+        // Same package and product the Swift package's
+        // LibimobiledeviceGateway links for the C library's
+        // OpenSSL symbols (pair-record key/cert generation).
+        .package(url: "https://github.com/mahee96/RemotePairingKit.git", branch: "main")
     ],
     targets: [
         .binaryTarget(
