@@ -32,6 +32,7 @@ idevice68 = { package = "idevice", git = "https://github.com/jkcoxson/idevice", 
 ] }
 tokio = { version = "1.44", features = ["rt", "sync", "time", "net", "io-util"] }
 plist = "1"
+libc = "0.2"
 
 [dev-dependencies]
 tokio = { version = "1.44", features = ["macros", "rt-multi-thread", "io-util", "time"] }

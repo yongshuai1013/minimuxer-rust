@@ -30,6 +30,7 @@
 //! `rppairing_pair_verify`'s contract — setup only
 //! runs through the explicit wireless flows.
 
+pub mod advertise;
 pub mod pairing;
 pub mod session;
 pub mod stream;
@@ -38,6 +39,7 @@ pub mod stream;
 /// names its service clients through one path (D-M7-2).
 pub use idevice68;
 
+pub use advertise::{AdvertiseError, Advertisement};
 pub use pairing::{pair_network, PairHostPreparation, TcpAcceptor};
 pub use session::{
     is_pairing_error68, resolve_service_port, RpError, RpIdentity, RpResult, RpSession,

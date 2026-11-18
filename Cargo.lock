@@ -1978,6 +1978,7 @@ name = "mm-rp"
 version = "0.1.0"
 dependencies = [
  "idevice 0.1.68",
+ "libc",
  "mm-common",
  "plist",
  "tokio",
