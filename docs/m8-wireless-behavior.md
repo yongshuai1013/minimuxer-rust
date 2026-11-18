@@ -195,3 +195,32 @@ PIN 顯示於 App、於裝置輸入→配對完成→產出檔可
 層段，DESIGN M8 驗收原文）。
 4. 介面列表（network.activeInterfaces）在配對場
 景顯示正確（DESIGN M8 驗收原文，M2 遺留同場）。
+
+
+## F. 對應率結算（2026-11-18 closeout）
+
+全 25 項（W8＋G12＋P3＋B2）：
+
+- **全項 host/CI 驗證（16）**：W1、W2、W3、W4、
+  W5、W6、W7（mm-core wireless_pair 測試 4 支覆
+  蓋重入取消／keyed 並行／PIN 預設與 by-id／事件
+  轉發／stop 全清）；G2、G3（mm-rp pairing 測試
+  5 支：prepare 內容與 TXT/authTag、acceptor
+  loopback）；G9、G10、G11、G12（mm-gateway
+  wireless_pair 測試 11 支：路徑表 5、finalize
+  往返＋寫入失敗形狀、limd 逐字 unsupported 於
+  代碼與編譯面）；P3（配對檔往返解析，M7 既有
+  ＋finalize 測試）；B1、B2（服務層生命週期＋
+  macOS CI spike 真註冊，run 44262219678）。
+- **形狀級 host 驗證、全序真機（6）**：G1（序與
+  形狀已驗，SRP 全序待真機）、G5（取消形狀已
+  驗；prepare 失敗形狀依 D-M8 清單屬不可達、僅
+  形狀保留）、G6（端點驗證＋拒連形狀已驗，全序
+  待真機）、G7（PIN 等待與 60 秒代用在 gateway
+  代碼面、by-id 路由在 mm-core 驗畢；對真裝置
+  的時序待真機）、P1、P2（idevice68 接線，crate
+  內協議；對真裝置全序待真機）。
+- **真機專屬（3）**：W8（回呼的 MainActor 交付
+  在殼側 sink、整合場驗）、G4、G8（peer 欄位取
+  捨須真配對 peer）。
+- 真機待驗即 §E 四項，不另增。

@@ -42,13 +42,22 @@ trigger 是恆 unsupported 的「假雙實作」；Rust 同形
 ——gw-limd 覆寫為逐字 reason 的 unsupportedOperation，
 **不假裝雙實作**；實作只在 gw-idevice（經 mm-rp）。
 
-## 2. Bonjour 廣告：主路線 dns-sd（E2 不啟用，見 D-M8-9 落定後回填）
+## 2. Bonjour 廣告：主路線 dns-sd 成立，E2 不啟用（D-M8-9 已落定）
 
 主路線＝Rust 直呼 dns-sd C API（DNSServiceRegister
 ＋sockfd 泵），依 DESIGN §5.2。spike 於 mm-rp
 `advertise` 模組：Apple 目標真 FFI；非 Apple 目標
-回平台 unsupported 錯誤（host stub）。結果與 E2
-啟用與否記於 D-M8-9。
+回平台 unsupported 錯誤（host stub）。macOS CI
+（run 44262219678）spike 測試真註冊通過，主路線
+成立、**E2 後備殼不啟用**，證據見 D-M8-9。
+
+註記：首輪 CI（runs 44260532016／44261081707／
+44261453887）紅在 host 測試步——advertise 的
+Apple 專屬模組有一處型別錯誤（RegisterReply 為
+Option<fn>、呼叫點傳裸 fn），本機 Linux 編不到
+該模組而未攔下；修復 commit 85b04e04（呼叫點改
+Some(register_reply)，並以獨立 rustc 對該模組做
+型別檢查確認無其他同類問題）後全綠。
 
 ## 3. 差異清單（D-M8-*）
 
@@ -100,7 +109,19 @@ trigger 是恆 unsupported 的「假雙實作」；Rust 同形
   不直接讀 crate 欄位——保留 G9 的失敗形狀位置，
   雖然 generate 本身無失敗路。
 - **D-M8-9（Bonjour spike 結果／E2 啟用與否）**：
-  （實作段回填。）
+  **主路線成立、E2 不啟用。** 證據：macOS CI
+  run 44262219678 的 host 測試 job（134658049203）
+  全綠，其 mm-rp advertise 測試組 4/4 含
+  `spike_register_pairable_host_service ... ok`
+  ——在 CI 的 macOS 上以正式 service type
+  `_remotepairing-pairable-host._tcp.`＋完整 TXT
+  真註冊、callback 回 0、stop 後註銷乾淨。同一
+  run 的 xcframework artifact 14409069689（47,433,
+  486 B）驗包通過：zip sha256 與附帶 .sha256 一
+  致、device＋simulator 雙 slice、device .a 含
+  mm_wireless_* 七導出與 DNSServiceRegister 參
+  照、舊符號連續。真機上廣告是否被裝置端看見
+  仍屬真機待驗（行為清單 E 表）。
 - **D-M8-10（finalize 的死參數）**：Swift finalize
   的 fallbackUdid 參數與 pairedUdid／altIrkHex 計
   算皆不進 record（僅日誌）；Rust finalize 不設
@@ -109,3 +130,23 @@ trigger 是恆 unsupported 的「假雙實作」；Rust 同形
   為 mm_common::PairingFile（Swift 為 `any
   PairingFile` 協議），過 FFI 時以序列化內容字串
   交付、殼側以 mm_parse_pairing_file 重建。
+- **D-M8-11（任務槽清除的 id 比對，簿記硬化）**：
+  Swift 的 start/trigger completion 無條件清槽
+  （activeStartTask = nil／removeValue(forKey:)）
+  ——重入時舊任務的遲到 completion 會誤清新任務
+  的槽（新任務仍跑、但 stop() 再也取消不到）。
+  Rust 改為「id 相符才清」，stop() 覆蓋面完整；
+  App 可見行為（completion 交付、取消傳播）不
+  變，僅簿記差異。
+- **D-M8-12（註冊表落點與 onReady 三元組）**：
+  DESIGN §5.2 文字把 keyed 任務註冊表寫在 mm-rp
+  內；實際落點為 mm-core 的 WirelessPairService
+  ——因註冊表須同時協調 gateway 操作、廣告
+  （mm-rp）與 App 事件，且 Swift 原物即位於
+  facade 層（MinimuxerImpl.wirelessPair），mm-rp
+  只持會話／廣告原語。另 §5.2「onReady 三元組原
+  樣過界」：(serviceID, port, txtRecords) 在
+  gateway→service 界面原樣傳遞；對 App 的 sink
+  只出 (serviceID, port)，與 Swift 的
+  onReadyToPair(String, Int) 逐字一致（TXT 在
+  Swift 亦不達 App、僅供 startAdvertising）。
