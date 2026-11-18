@@ -260,6 +260,10 @@ pub struct MinimuxerCore {
     /// Swift `MinimuxerImpl.emproxy` — held, never driven by
     /// core start/stop (M6; the App layer owns its lifecycle).
     emproxy: EmProxy,
+    /// Swift `MinimuxerImpl.wirelessPair` (M8): the
+    /// wireless pairing service over the same gateway
+    /// provider.
+    wireless_pair: Arc<crate::wireless_pair::WirelessPairService>,
     /// The Mounter's download seam (production: reqwest;
     /// replaceable for tests).
     downloader: Mutex<Arc<dyn ImageDownloader>>,
@@ -291,12 +295,15 @@ impl MinimuxerCore {
             }),
             Arc::new(TokioClock),
         ));
+        let wireless_pair =
+            crate::wireless_pair::WirelessPairService::new(provider.clone());
         let core = Arc::new(Self {
             provider,
             stack: stack.clone(),
             observer,
             proxy,
             heartbeat,
+            wireless_pair,
             emproxy: EmProxy::with_candidate_provider(Arc::new(|| {
                 mm_net::resolve_candidate_peers(&mm_net::scan(true))
                     .iter()
@@ -339,6 +346,13 @@ impl MinimuxerCore {
     /// The held EMProxy instance (Swift `MinimuxerImpl.emproxy`).
     pub fn emproxy(&self) -> &EmProxy {
         &self.emproxy
+    }
+
+    /// The wireless pairing service (Swift
+    /// `MinimuxerImpl.wirelessPair`, the facade's
+    /// `wirelessPair` property).
+    pub fn wireless_pair(&self) -> &Arc<crate::wireless_pair::WirelessPairService> {
+        &self.wireless_pair
     }
 
     /// Swift `activeProtocol`.

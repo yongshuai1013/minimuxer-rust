@@ -15,6 +15,7 @@ pub mod core;
 pub mod heartbeat;
 pub mod mounter;
 pub mod usbmuxd_proxy;
+pub mod wireless_pair;
 
 pub use core::{
     map_gateway_error, run_with_checks, CoreGatewayProvider, CoreStatus,
@@ -22,6 +23,7 @@ pub use core::{
     StatusHandler, SystemOsVersion,
 };
 pub use mounter::{ImageDownloader, Mounter, ReqwestDownloader};
+pub use wireless_pair::{WirelessPairAppEvents, WirelessPairService};
 pub use heartbeat::{
     clamp_interval, next_unreachable_backoff, pacing_duration, HeartbeatClock,
     HeartbeatDeps, HeartbeatFuture, HeartbeatService, TokioClock,
