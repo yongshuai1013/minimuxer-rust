@@ -483,8 +483,11 @@ async fn connection_refused_is_service_error_at_connect() {
     mock().set_session(SessionBehavior::Accept);
     let gw = IdeviceGateway::new();
     gw.start(&pairing_content(), None).await.unwrap();
-    // 127.0.0.2 is loopback too, but nothing listens on :62078 there.
-    gw.set_device_endpoint_ip(Some("127.0.0.2"));
+    // Nothing listens on [::1]:62078 (the mock is IPv4-only), and
+    // the v6 loopback refuses immediately on both Linux and
+    // macOS — unlike 127.0.0.2, which macOS does not treat as
+    // local and whose connects hang instead of refusing.
+    gw.set_device_endpoint_ip(Some("::1"));
     let err = within(gw.fetch_udid()).await.unwrap_err();
     assert_eq!(err.domain, "DeviceGatewayError");
     assert_eq!(err.code, "serviceError");
