@@ -2,6 +2,32 @@
 name = "mm-rp"
 version = "0.1.0"
 edition = "2021"
+description = "Minimuxer Rust rewrite: RemotePairing session layer (M7) — pair-verify, TLS-PSK CDTunnel, user-space TCP and RSD handshake over the idevice crate's 0.1.68 RP stack (renamed dependency, inventory docs/m7-rp-inventory.md verdict (a))."
 
 [dependencies]
 mm-common = { path = "../mm-common" }
+# Renamed on purpose (diff list D-M7-2): the workspace also
+# carries idevice 0.1.29 for the lockdown paths; the two major
+# lines' types never mix — everything 0.1.68 is reached through
+# this crate's re-export.
+idevice68 = { package = "idevice", version = "0.1.68", default-features = false, features = [
+  "remote_pairing",
+  "rsd",
+  "tunnel_tcp_stack",
+  "tss",
+  "tcp",
+  "usbmuxd",
+  "heartbeat",
+  "misagent",
+  "installation_proxy",
+  "afc",
+  "house_arrest",
+  "mobile_image_mounter",
+  "debug_proxy",
+  "ring",
+] }
+tokio = { version = "1.44", features = ["rt", "sync", "time", "net", "io-util"] }
+plist = "1"
+
+[dev-dependencies]
+tokio = { version = "1.44", features = ["macros", "rt-multi-thread", "io-util", "time"] }
