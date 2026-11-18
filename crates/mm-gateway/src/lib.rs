@@ -15,17 +15,33 @@
 //! design's no-fake-compatibility rule. The line-by-line Swift
 //! comparison this implementation follows is
 //! `docs/m3-gateway-diff.md` in the repo.
+//!
+//! M5 adds the operation surface (install pipeline, DDI mount
+//! bodies, debugserver basics) for the lockdown paths of both
+//! backends, the RSP tools (`rsp`), the RSD AFC codec
+//! (`rsd_afc`, wired in M7), and the packet-level `AfcSession`
+//! gw-idevice's file operations run on — see
+//! `docs/m5-install-ddi-debug-diff.md`.
 
+pub mod afc_session;
 pub mod base;
 pub mod gateway;
 pub mod gw_idevice;
 #[cfg(feature = "limd")]
 pub mod gw_limd;
+pub mod rawconn;
+pub mod rsp;
+pub mod rsd_afc;
 
+pub use afc_session::AfcSession;
 pub use base::GatewayCore;
 pub use gateway::{
-    unsupported, DeviceGateway, GatewayBackend, GatewayFuture, GatewayProvider,
-    OpenedService,
+    unsupported, AfcFileInfo, DeviceGateway, GatewayBackend, GatewayFuture,
+    GatewayProvider, OpenedService,
+};
+pub use rsp::{
+    decode_hex_ascii, find_process_pid, process_search_terms, string_to_hex,
+    RspClient, RspProcessInfo, RspStopReply,
 };
 pub use gw_idevice::IdeviceGateway;
 #[cfg(feature = "limd")]

@@ -186,12 +186,147 @@ pub trait DeviceGateway: Send + Sync {
         Box::pin(async move { Err(unsupported("performHeartbeat")) })
     }
 
-    /// Swift `isDDIMounted()`. The mount machinery (Mounter +
-    /// backend mount queries) lands in M5; the default reports
-    /// `unsupportedOperation` until then.
+    /// Swift `isDDIMounted()`. The query lands per backend in
+    /// M5; the default (test doubles) reports unsupported.
     fn is_ddi_mounted<'a>(&'a self) -> GatewayFuture<'a, bool> {
         Box::pin(async move { Err(unsupported("isDDIMounted")) })
     }
+
+    // -- M5 operation surface (diff list docs/m5-install-ddi-debug-diff.md).
+    // Defaults report `unsupportedOperation` with the Swift
+    // operation name; both backends override the lockdown paths.
+    // The RP paths stay unsupported until M7 in the backends
+    // themselves.
+
+    /// Swift `mountDeveloperImage(image:signature:)` (pre-17 DDI).
+    fn mount_developer_image<'a>(
+        &'a self,
+        _image: &'a [u8],
+        _signature: &'a [u8],
+    ) -> GatewayFuture<'a, ()> {
+        Box::pin(async move { Err(unsupported("mountDeveloperImage")) })
+    }
+
+    /// Swift `mountPersonalizedDdi(image:trustcache:manifest:)`.
+    fn mount_personalized_ddi<'a>(
+        &'a self,
+        _image: &'a [u8],
+        _trustcache: &'a [u8],
+        _manifest: &'a [u8],
+    ) -> GatewayFuture<'a, ()> {
+        Box::pin(async move { Err(unsupported("mountPersonalizedDdi")) })
+    }
+
+    /// Swift `installProvisioningProfile(profile:)`.
+    fn install_provisioning_profile<'a>(
+        &'a self,
+        _profile: &'a [u8],
+    ) -> GatewayFuture<'a, ()> {
+        Box::pin(async move { Err(unsupported("installProvisioningProfile")) })
+    }
+
+    /// Swift `removeProvisioningProfile(id:)`.
+    fn remove_provisioning_profile<'a>(
+        &'a self,
+        _id: &'a str,
+    ) -> GatewayFuture<'a, ()> {
+        Box::pin(async move { Err(unsupported("removeProvisioningProfile")) })
+    }
+
+    /// Swift `dumpProfiles(docsPath:)` — the return value's
+    /// meaning is backend-specific in Swift (a directory path
+    /// for gw-idevice; an XML string for gw-limd's lockdown
+    /// path) and is replicated per backend.
+    fn dump_profiles<'a>(&'a self, _docs_path: &'a str) -> GatewayFuture<'a, String> {
+        Box::pin(async move { Err(unsupported("dumpProfiles")) })
+    }
+
+    /// Swift `removeApp(bundleId:)`.
+    fn remove_app<'a>(&'a self, _bundle_id: &'a str) -> GatewayFuture<'a, ()> {
+        Box::pin(async move { Err(unsupported("removeApp")) })
+    }
+
+    /// Swift `sendIpaAfc(bundleId:ipaBytes:)`.
+    fn send_ipa_afc<'a>(
+        &'a self,
+        _bundle_id: &'a str,
+        _ipa_bytes: &'a [u8],
+    ) -> GatewayFuture<'a, ()> {
+        Box::pin(async move { Err(unsupported("sendIpaAfc")) })
+    }
+
+    /// Swift `sendAppBundleAfc(bundleId:appURL:)` — the URL is
+    /// carried as a plain filesystem path across the port.
+    fn send_app_bundle_afc<'a>(
+        &'a self,
+        _bundle_id: &'a str,
+        _app_path: &'a str,
+    ) -> GatewayFuture<'a, ()> {
+        Box::pin(async move { Err(unsupported("sendAppBundleAfc")) })
+    }
+
+    /// Swift `installIpa(bundleId:)`.
+    fn install_ipa<'a>(&'a self, _bundle_id: &'a str) -> GatewayFuture<'a, ()> {
+        Box::pin(async move { Err(unsupported("installIpa")) })
+    }
+
+    /// Swift `installAppBundle(bundleId:appName:)`.
+    fn install_app_bundle<'a>(
+        &'a self,
+        _bundle_id: &'a str,
+        _app_name: &'a str,
+    ) -> GatewayFuture<'a, ()> {
+        Box::pin(async move { Err(unsupported("installAppBundle")) })
+    }
+
+    /// Swift `wipeContainer(identifier:)`.
+    fn wipe_container<'a>(&'a self, _identifier: &'a str) -> GatewayFuture<'a, ()> {
+        Box::pin(async move { Err(unsupported("wipeContainer")) })
+    }
+
+    /// Swift `debugApp(appId:)`.
+    fn debug_app<'a>(&'a self, _app_id: &'a str) -> GatewayFuture<'a, ()> {
+        Box::pin(async move { Err(unsupported("debugApp")) })
+    }
+
+    /// Swift `debugProcess(pid:)`.
+    fn debug_process<'a>(&'a self, _pid: u32) -> GatewayFuture<'a, ()> {
+        Box::pin(async move { Err(unsupported("debugProcess")) })
+    }
+
+    /// Swift `afcListDirectory(bundleId:path:)`.
+    fn afc_list_directory<'a>(
+        &'a self,
+        _bundle_id: &'a str,
+        _path: &'a str,
+    ) -> GatewayFuture<'a, Vec<String>> {
+        Box::pin(async move { Err(unsupported("afcListDirectory")) })
+    }
+
+    /// Swift `afcReadFile(bundleId:path:)`.
+    fn afc_read_file<'a>(
+        &'a self,
+        _bundle_id: &'a str,
+        _path: &'a str,
+    ) -> GatewayFuture<'a, Vec<u8>> {
+        Box::pin(async move { Err(unsupported("afcReadFile")) })
+    }
+
+    /// Swift `afcGetFileInfo(bundleId:path:)`.
+    fn afc_get_file_info<'a>(
+        &'a self,
+        _bundle_id: &'a str,
+        _path: &'a str,
+    ) -> GatewayFuture<'a, AfcFileInfo> {
+        Box::pin(async move { Err(unsupported("afcGetFileInfo")) })
+    }
+}
+
+/// Swift `afcGetFileInfo`'s return tuple.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AfcFileInfo {
+    pub is_directory: bool,
+    pub file_size: i64,
 }
 
 /// Swift `DeviceProvider`: a level of indirection so subsystems
