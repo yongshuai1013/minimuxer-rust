@@ -10,7 +10,11 @@
 //! composition; M5 lands the operation forwards
 //! (install/AFC/profiles/debug) and the Mounter body behind
 //! `mount_ddi` (diff list `docs/m5-install-ddi-debug-diff.md`,
-//! closing D-M4-4).
+//! closing D-M4-4). M6 adds the held `EmProxy` instance
+//! (Swift `MinimuxerImpl.emproxy`): the core owns it and hands
+//! it to the FFI surface, but — exactly like Swift — core
+//! start/stop never drive it; the App layer starts it before
+//! `start` (diff list `docs/m6-emproxy-diff.md` §3).
 
 use std::future::Future;
 use std::pin::Pin;
@@ -20,6 +24,7 @@ use mm_common::constants::REMOTE_PAIRING_PORT;
 use mm_common::error::{DeviceGatewayError, MinimuxerError};
 use mm_common::logging::{debug_log, verbose_log};
 use mm_common::{MmErrorInfo, PairingProtocol};
+use mm_emproxy::EmProxy;
 use mm_gateway::{DeviceGateway, GatewayBackend, GatewayProvider};
 use mm_net::{
     ConnectionConfigBinding, DeviceConnectionMode, NetStack, PollingObserver,
@@ -252,6 +257,9 @@ pub struct MinimuxerCore {
     observer: Arc<PollingObserver>,
     proxy: Arc<UsbmuxdProxyServer>,
     heartbeat: Arc<HeartbeatService>,
+    /// Swift `MinimuxerImpl.emproxy` — held, never driven by
+    /// core start/stop (M6; the App layer owns its lifecycle).
+    emproxy: EmProxy,
     /// The Mounter's download seam (production: reqwest;
     /// replaceable for tests).
     downloader: Mutex<Arc<dyn ImageDownloader>>,
@@ -289,6 +297,12 @@ impl MinimuxerCore {
             observer,
             proxy,
             heartbeat,
+            emproxy: EmProxy::with_candidate_provider(Arc::new(|| {
+                mm_net::resolve_candidate_peers(&mm_net::scan(true))
+                    .iter()
+                    .map(|c| c.ip.clone())
+                    .collect()
+            })),
             downloader: Mutex::new(Arc::new(ReqwestDownloader)),
             state: Mutex::new(CoreState::default()),
             os_version,
@@ -320,6 +334,11 @@ impl MinimuxerCore {
         self.provider
             .current_gateway()
             .expect("core gateway provider must always yield a gateway")
+    }
+
+    /// The held EMProxy instance (Swift `MinimuxerImpl.emproxy`).
+    pub fn emproxy(&self) -> &EmProxy {
+        &self.emproxy
     }
 
     /// Swift `activeProtocol`.

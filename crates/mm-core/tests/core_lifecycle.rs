@@ -1473,3 +1473,29 @@ async fn dump_profiles_raw_returns_gateway_path() {
         .unwrap();
     assert_eq!(out, format!("{docs}/Profiles"));
 }
+
+// ---------------------------------------------------------------------------
+// M6: the core holds EMProxy but never drives it
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn m6_emproxy_not_driven_by_core_start() {
+    let _g = lock();
+    let h = harness(
+        DeviceConnectionMode::LocalVpn,
+        GatewayBackend::Idevice,
+        None,
+    )
+    .await;
+    // Held from construction, unconfigured and not running.
+    assert!(!h.core.emproxy().is_running());
+    assert_eq!(h.core.emproxy().handshake_config(), None);
+    // Core start must not start it: Swift MinimuxerImpl.start
+    // never touches emproxy — AppBootManager starts EMProxy
+    // before minimuxer start (docs/m6-emproxy-diff.md §3).
+    let _listener = start_ready(&h).await;
+    assert!(!h.core.emproxy().is_running());
+    // Core stop likewise leaves it alone.
+    h.core.stop().await.unwrap();
+    assert!(!h.core.emproxy().is_running());
+}
