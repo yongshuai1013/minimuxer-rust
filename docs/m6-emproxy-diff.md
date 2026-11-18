@@ -133,3 +133,16 @@ Result<ProxyHandle, c_int>` 自行持有 handle（sender＋join_handle），
   EPERM」——即 boringtun 已產出 response、僅送出被沙箱擋。
   C1/C2/C4/C5 全斷言待 macOS CI 裁決（workflow 的 cargo
   test 步）。
+- **CI 裁決（run 44245093690，HEAD c20564ab）**：macOS 上
+  wireguard_server 5/5 全過——**C1 握手、C4 內層 IPv4
+  loopback 交換皆全斷言通過**（boringtun allowed-IP 未擋，
+  無須降級真機）；config_and_state 13/13、handshake_probe
+  6/6、mm-ffi 24/24（含 ffi_emproxy_face_shapes）、mm-core
+  55、mm-common 21。attempt 1 僅敗於 mm-gateway 既有 flaky
+  `open_service_connects_to_started_port`（mock 埠時序，
+  M5 首見、本次第 2 次再現；同 run attempt 2 通過，依派工
+  紀律記錄不改判）。attempt 2 全綠，artifact
+  MinimuxerRust.xcframework（14401794538）驗包通過：
+  sha256 50e0fb6d… 與內附 .sha256 一致、device slice
+  arm64（cputype 16777228）、綁定含 mm_emproxy 面、
+  device .a 抽驗含 EmProxy／mm_emproxy_stop 符號。

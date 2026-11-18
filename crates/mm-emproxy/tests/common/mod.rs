@@ -1,4 +1,6 @@
 //! Shared helpers for mm-emproxy integration tests.
+//! Each test binary uses a subset of the helpers.
+#![allow(dead_code)]
 
 use std::net::TcpListener;
 use std::sync::Mutex;
