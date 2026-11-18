@@ -37,13 +37,22 @@ enum SessionBehavior {
 struct MockState {
     session: SessionBehavior,
     rejected_services: HashSet<String>,
+    /// FIFO of services handed out by StartService; the service
+    /// endpoint pops one name per accepted connection so it can
+    /// speak the right protocol (heartbeat vs. generic).
+    service_queue: std::collections::VecDeque<String>,
 }
 
 struct Mock {
     state: Arc<Mutex<MockState>>,
     service_port: u16,
     service_accepts: Arc<AtomicUsize>,
+    /// Polo frames the mock heartbeat service received.
+    polo_frames: Arc<Mutex<Vec<Dictionary>>>,
 }
+
+/// The Marco interval the mock heartbeat service reports.
+const MOCK_MARCO_INTERVAL: i64 = 15;
 
 static MOCK: OnceLock<Mock> = OnceLock::new();
 static TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -256,6 +265,11 @@ async fn handle_conn(
                     )
                     .await;
                 } else {
+                    state
+                        .lock()
+                        .unwrap()
+                        .service_queue
+                        .push_back(service.clone());
                     write_frame(
                         stream.as_mut().unwrap(),
                         dict_of(&[
@@ -279,12 +293,15 @@ fn mock() -> &'static Mock {
         let state = Arc::new(Mutex::new(MockState {
             session: SessionBehavior::Accept,
             rejected_services: HashSet::new(),
+            service_queue: std::collections::VecDeque::new(),
         }));
         let service_accepts = Arc::new(AtomicUsize::new(0));
+        let polo_frames: Arc<Mutex<Vec<Dictionary>>> = Arc::new(Mutex::new(Vec::new()));
         let acceptor = tls_acceptor();
         let (port_tx, port_rx) = std::sync::mpsc::channel();
         let state_clone = state.clone();
         let accepts_clone = service_accepts.clone();
+        let polo_clone = polo_frames.clone();
         // The mock runs on its own thread with its own runtime:
         // blocking below for the service port must not starve the
         // runtime the test itself is executing on.
@@ -298,16 +315,30 @@ fn mock() -> &'static Mock {
             let service_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let service_port = service_listener.local_addr().unwrap().port();
             port_tx.send(service_port).unwrap();
+            let service_state = state_clone.clone();
             tokio::spawn(async move {
                 loop {
                     match service_listener.accept().await {
                         Ok((socket, _)) => {
                             accepts_clone.fetch_add(1, Ordering::SeqCst);
-                            // Hold the connection briefly, then drop.
-                            tokio::spawn(async move {
-                                tokio::time::sleep(Duration::from_millis(200)).await;
-                                drop(socket);
-                            });
+                            let service = service_state
+                                .lock()
+                                .unwrap()
+                                .service_queue
+                                .pop_front()
+                                .unwrap_or_default();
+                            if service == "com.apple.mobile.heartbeat" {
+                                let polo = polo_clone.clone();
+                                tokio::spawn(async move {
+                                    handle_heartbeat_conn(socket, polo).await;
+                                });
+                            } else {
+                                // Hold the connection briefly, then drop.
+                                tokio::spawn(async move {
+                                    tokio::time::sleep(Duration::from_millis(200)).await;
+                                    drop(socket);
+                                });
+                            }
                         }
                         Err(_) => break,
                     }
@@ -331,8 +362,27 @@ fn mock() -> &'static Mock {
             state,
             service_port,
             service_accepts,
+            polo_frames,
         }
     })
+}
+
+/// The mock heartbeat service: send a Marco carrying
+/// `MOCK_MARCO_INTERVAL`, then record whatever the client
+/// answers (expected: the Polo frame) and close.
+async fn handle_heartbeat_conn(socket: TcpStream, polo_frames: Arc<Mutex<Vec<Dictionary>>>) {
+    let mut stream = MockStream::Plain(socket);
+    write_frame(
+        &mut stream,
+        dict_of(&[
+            ("Command", Value::String("Marco".into())),
+            ("Interval", Value::Integer(MOCK_MARCO_INTERVAL.into())),
+        ]),
+    )
+    .await;
+    if let Some(frame) = read_frame(&mut stream).await {
+        polo_frames.lock().unwrap().push(frame);
+    }
 }
 
 impl Mock {
@@ -348,6 +398,12 @@ impl Mock {
     }
     fn clear_rejected(&self) {
         self.state.lock().unwrap().rejected_services.clear();
+    }
+    fn take_polo_frames(&self) -> Vec<Dictionary> {
+        std::mem::take(&mut *self.polo_frames.lock().unwrap())
+    }
+    fn polo_count(&self) -> usize {
+        self.polo_frames.lock().unwrap().len()
     }
 }
 
@@ -563,4 +619,78 @@ fn usbmuxd_addr_env_parsing() {
         UsbmuxdAddr::UnixSocket(path) => assert_eq!(path, "/tmp/usbmuxd"),
         _ => panic!("expected unix addr"),
     }
+}
+
+// ---------------------------------------------------------------------------
+// M4: performHeartbeat against the mock heartbeat service.
+// ---------------------------------------------------------------------------
+
+fn rp_pairing_content() -> String {
+    // Minimal valid rppairing file (mm-common's required keys).
+    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\">\n<dict>\n\
+     <key>private_key</key>\n<data>AAECAw==</data>\n\
+     <key>public_key</key>\n<data>AAECAw==</data>\n\
+     <key>identifier</key>\n<string>rp-device-1</string>\n\
+     </dict>\n</plist>\n"
+        .to_string()
+}
+
+#[tokio::test]
+async fn perform_heartbeat_marco_polo_round_trip() {
+    let _guard = TEST_LOCK.lock().await;
+    mock().set_session(SessionBehavior::Accept);
+    let _ = mock().take_polo_frames();
+    let gw = started_gateway().await;
+
+    let new_interval = within(gw.perform_heartbeat(5)).await.unwrap();
+    // The mock's Marco carries Interval=15; the gateway returns it
+    // verbatim (Swift: `newInterval > 0 ? newInterval : interval`).
+    assert_eq!(new_interval, MOCK_MARCO_INTERVAL as u64);
+
+    // The client must have answered the Marco with a Polo (the
+    // mock records it asynchronously; wait for it to land).
+    let mut polos = Vec::new();
+    for _ in 0..50 {
+        if mock().polo_count() > 0 {
+            polos = mock().take_polo_frames();
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(polos.len(), 1);
+    assert_eq!(
+        polos[0].get("Command").and_then(|v| v.as_string()),
+        Some("Polo")
+    );
+}
+
+#[tokio::test]
+async fn perform_heartbeat_requires_start() {
+    let _guard = TEST_LOCK.lock().await;
+    let gw = IdeviceGateway::new();
+    let err = within(gw.perform_heartbeat(5)).await.unwrap_err();
+    assert_eq!(err.domain, "DeviceGatewayError");
+    assert_eq!(err.code, "notInitialized");
+}
+
+#[tokio::test]
+async fn perform_heartbeat_rp_is_unsupported_until_m7() {
+    let _guard = TEST_LOCK.lock().await;
+    let gw = IdeviceGateway::new();
+    gw.start(&rp_pairing_content(), None).await.unwrap();
+    assert_eq!(gw.pairing_file_type(), PairingProtocol::RpPairing);
+    let err = within(gw.perform_heartbeat(5)).await.unwrap_err();
+    assert_eq!(err.domain, "DeviceGatewayError");
+    assert_eq!(err.code, "unsupportedOperation");
+    assert_eq!(err.reason, "performHeartbeat");
+}
+
+#[tokio::test]
+async fn is_ddi_mounted_is_unsupported_until_m5() {
+    let _guard = TEST_LOCK.lock().await;
+    let gw = started_gateway().await;
+    let err = within(gw.is_ddi_mounted()).await.unwrap_err();
+    assert_eq!(err.domain, "DeviceGatewayError");
+    assert_eq!(err.code, "unsupportedOperation");
+    assert_eq!(err.reason, "isDDIMounted");
 }

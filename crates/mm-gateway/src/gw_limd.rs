@@ -168,6 +168,90 @@ fn with_lockdown<T>(
     body(client)
 }
 
+/// Reverse of the wrapper's `From<i32> for HeartbeatError` table,
+/// for Swift's `code <n>` reason formats. `UnknownError` has no
+/// recoverable code; -999 marks the lossy round trip (same
+/// convention as the lockdownd/idevice tables above).
+fn heartbeat_error_code(err: &rusty_libimobiledevice::error::HeartbeatError) -> i32 {
+    use rusty_libimobiledevice::error::HeartbeatError::*;
+    match err {
+        Success => 0,
+        InvalidArg => -1,
+        PlistError => -2,
+        MuxError => -3,
+        SslError => -4,
+        NotEnoughData => -5,
+        Timeout => -6,
+        UnknownError => -999,
+    }
+}
+
+/// Reads the `Interval` value out of a heartbeat response plist
+/// (Swift reads the uint node; a non-integer or missing node
+/// yields `None` and the caller falls back to the input
+/// interval).
+fn interval_from_heartbeat_response(resp: &plist_plus::Plist) -> Option<u64> {
+    let item = resp.dict_get_item("Interval").ok()?;
+    if item.plist_type != plist_plus::PlistType::Integer {
+        return None;
+    }
+    item.get_uint_val().ok()
+}
+
+/// Swift `syncPerformHeartbeat` (lockdown branch): Pico plist
+/// out, response `Interval` back. Runs on a blocking thread.
+fn limd_perform_heartbeat(udid: &str, interval: u64) -> Result<u64, MmErrorInfo> {
+    let device = rusty_libimobiledevice::idevice::get_device(udid).map_err(|e| {
+        gw_error(
+            DeviceGatewayCode::ConnectionFailed,
+            format!(
+                "idevice_new_with_options failed with code {}",
+                idevice_error_code(&e)
+            ),
+        )
+    })?;
+    let client =
+        rusty_libimobiledevice::services::heartbeat::HeartbeatClient::new(&device, APP_NAME)
+            .map_err(|e| {
+                gw_error(
+                    DeviceGatewayCode::ServiceError,
+                    format!(
+                        "Failed to create client for 'com.apple.mobile.heartbeat': code {}",
+                        heartbeat_error_code(&e)
+                    ),
+                )
+            })?;
+    let mut pico = plist_plus::Plist::new_dict();
+    let _ = pico.dict_set_item("Command", plist_plus::Plist::new_string("Pico"));
+    client.send(pico).map_err(|e| {
+        gw_error(
+            DeviceGatewayCode::ServiceError,
+            format!(
+                "heartbeat_send failed with code {}",
+                heartbeat_error_code(&e)
+            ),
+        )
+    })?;
+    // Swift `heartbeat_receive_with_timeout(..., 5000)`. The
+    // wrapper collapses "error code + non-null plist" into Err
+    // (diff list D-M4-7); Swift reads the plist first there.
+    let resp = client.receive(5000).map_err(|e| {
+        gw_error(
+            DeviceGatewayCode::ServiceError,
+            format!(
+                "heartbeat_receive_with_timeout failed with code {}",
+                heartbeat_error_code(&e)
+            ),
+        )
+    })?;
+    let new_interval = interval_from_heartbeat_response(&resp).unwrap_or(interval);
+    Ok(if new_interval > 0 {
+        new_interval
+    } else {
+        interval
+    })
+}
+
 /// Swift `syncGetLockdownValue` (lockdown branch).
 fn limd_get_value(udid: &str, key: &str) -> Result<String, MmErrorInfo> {
     with_lockdown(udid, |client| {
@@ -336,6 +420,24 @@ impl DeviceGateway for LibimobiledeviceGateway {
     fn stop_session<'a>(&'a self) -> GatewayFuture<'a, ()> {
         // No cached session exists on this backend (see above).
         Box::pin(async move { Ok(()) })
+    }
+
+    fn perform_heartbeat<'a>(&'a self, interval: u64) -> GatewayFuture<'a, u64> {
+        Box::pin(async move {
+            let udid = self.verify_initialized()?;
+            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
+                // The RSD Pico path is M7 (diff list D-2).
+                return Err(unsupported("performHeartbeat"));
+            }
+            tokio::task::spawn_blocking(move || limd_perform_heartbeat(&udid, interval))
+                .await
+                .map_err(|e| {
+                    gw_error(
+                        DeviceGatewayCode::ServiceError,
+                        format!("lockdown task failed: {e}"),
+                    )
+                })?
+        })
     }
 
     fn open_service<'a>(&'a self, service_name: &'a str) -> GatewayFuture<'a, OpenedService> {

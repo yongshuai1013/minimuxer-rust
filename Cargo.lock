@@ -1500,6 +1500,7 @@ dependencies = [
  "mm-common",
  "mm-rp",
  "plist",
+ "plist_plus",
  "rustls",
  "rusty_libimobiledevice",
  "tokio",

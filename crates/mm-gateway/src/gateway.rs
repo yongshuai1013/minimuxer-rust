@@ -172,6 +172,26 @@ pub trait DeviceGateway: Send + Sync {
     /// `com.apple.mobile.heartbeat`) and connects to it. The
     /// connection is held by the gateway until invalidation/stop.
     fn open_service<'a>(&'a self, service_name: &'a str) -> GatewayFuture<'a, OpenedService>;
+
+    /// Swift `performHeartbeat(interval:)`: one heartbeat round
+    /// trip on a fresh connection (idevice backend: Marco/Polo;
+    /// libimobiledevice backend: Pico plist + `Interval` reply),
+    /// returning the device-reported interval — or the input
+    /// interval when the device reports none (both Swift backends
+    /// end with `newInterval > 0 ? newInterval : interval`).
+    /// Landed in M4 for the lockdown paths; the RP paths report
+    /// `unsupportedOperation` until M7. The default (test doubles)
+    /// reports unsupported.
+    fn perform_heartbeat<'a>(&'a self, _interval: u64) -> GatewayFuture<'a, u64> {
+        Box::pin(async move { Err(unsupported("performHeartbeat")) })
+    }
+
+    /// Swift `isDDIMounted()`. The mount machinery (Mounter +
+    /// backend mount queries) lands in M5; the default reports
+    /// `unsupportedOperation` until then.
+    fn is_ddi_mounted<'a>(&'a self) -> GatewayFuture<'a, bool> {
+        Box::pin(async move { Err(unsupported("isDDIMounted")) })
+    }
 }
 
 /// Swift `DeviceProvider`: a level of indirection so subsystems

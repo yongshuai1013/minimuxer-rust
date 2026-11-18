@@ -313,6 +313,51 @@ impl DeviceGateway for IdeviceGateway {
         })
     }
 
+    fn perform_heartbeat<'a>(&'a self, interval: u64) -> GatewayFuture<'a, u64> {
+        Box::pin(async move {
+            debug_log(&format!(
+                "[IdeviceGateway] performHeartbeat() called, interval: {interval}"
+            ));
+            self.verify_initialized()?;
+            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
+                // The RSD heartbeat path is M7 (diff list D-2).
+                return Err(unsupported("performHeartbeat"));
+            }
+            // Swift `performWithEitherService` (lockdown route):
+            // a fresh heartbeat connection per beat.
+            let provider = self.tcp_provider()?;
+            let mut client =
+                idevice::heartbeat::HeartbeatClient::connect(&provider)
+                    .await
+                    .map_err(|e| {
+                        gw_error(
+                            DeviceGatewayCode::ServiceError,
+                            format!("Failed to connect to heartbeat, error: ({e})"),
+                        )
+                    })?;
+            let new_interval = client.get_marco(interval).await.map_err(|e| {
+                gw_error(
+                    DeviceGatewayCode::ServiceError,
+                    format!("Heartbeat receive failed, error: ({e})"),
+                )
+            })?;
+            client.send_polo().await.map_err(|e| {
+                gw_error(
+                    DeviceGatewayCode::ServiceError,
+                    format!("Heartbeat send failed, error: ({e})"),
+                )
+            })?;
+            debug_log(&format!(
+                "[IdeviceGateway] performHeartbeat() succeeded, newInterval: {new_interval}"
+            ));
+            Ok(if new_interval > 0 {
+                new_interval
+            } else {
+                interval
+            })
+        })
+    }
+
     fn open_service<'a>(&'a self, service_name: &'a str) -> GatewayFuture<'a, OpenedService> {
         Box::pin(async move {
             self.verify_initialized()?;
