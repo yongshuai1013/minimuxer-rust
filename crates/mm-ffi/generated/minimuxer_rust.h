@@ -33,7 +33,7 @@ void* __swift_bridge__$Vec_MmConnectionMode$as_ptr(void* vec_ptr);
 
 typedef struct __swift_bridge__$MmInterfaceInfo { void* name; void* ip; void* ipv6; void* subnet; void* interface_type; bool is_vpn; } __swift_bridge__$MmInterfaceInfo;
 typedef struct __swift_bridge__$Option$MmInterfaceInfo { bool is_some; __swift_bridge__$MmInterfaceInfo val; } __swift_bridge__$Option$MmInterfaceInfo;
-typedef struct __swift_bridge__$MmNetSnapshot { void* interfaces; bool wifi_satisfied; bool wired_satisfied; bool usb_satisfied; bool bridge_satisfied; bool utun_available; bool ipsec_available; } __swift_bridge__$MmNetSnapshot;
+typedef struct __swift_bridge__$MmNetSnapshot { bool wifi_satisfied; bool wired_satisfied; bool usb_satisfied; bool bridge_satisfied; bool utun_available; bool ipsec_available; } __swift_bridge__$MmNetSnapshot;
 typedef struct __swift_bridge__$Option$MmNetSnapshot { bool is_some; __swift_bridge__$MmNetSnapshot val; } __swift_bridge__$Option$MmNetSnapshot;
 typedef struct __swift_bridge__$MmEndpointOutcome { bool success; void* ip; struct __swift_bridge__$MmErrorInfo error; } __swift_bridge__$MmEndpointOutcome;
 typedef struct __swift_bridge__$Option$MmEndpointOutcome { bool is_some; __swift_bridge__$MmEndpointOutcome val; } __swift_bridge__$Option$MmEndpointOutcome;
@@ -105,7 +105,8 @@ void __swift_bridge__$mm_register_event_sink(void* sink);
 void __swift_bridge__$mm_clear_event_sink(void);
 void __swift_bridge__$mm_emit_log(void* message);
 void __swift_bridge__$mm_emit_status(bool success, void* domain, void* code, void* reason);
-void* __swift_bridge__$mm_net_scan_interfaces(void);
+uint32_t __swift_bridge__$mm_net_interface_count(void);
+struct __swift_bridge__$Option$MmInterfaceInfo __swift_bridge__$mm_net_interface_at(uint32_t index);
 struct __swift_bridge__$MmNetSnapshot __swift_bridge__$mm_net_snapshot(void);
 struct __swift_bridge__$MmEndpointOutcome __swift_bridge__$mm_net_endpoint(void);
 struct __swift_bridge__$MmConnectionMode __swift_bridge__$mm_net_connection_mode(void);

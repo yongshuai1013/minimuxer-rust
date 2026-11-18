@@ -47,8 +47,11 @@ public func mm_emit_log<GenericIntoRustString: IntoRustString>(_ message: Generi
 public func mm_emit_status<GenericIntoRustString: IntoRustString>(_ success: Bool, _ domain: GenericIntoRustString, _ code: GenericIntoRustString, _ reason: GenericIntoRustString) {
     __swift_bridge__$mm_emit_status(success, { let rustString = domain.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), { let rustString = code.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), { let rustString = reason.intoRustString(); rustString.isOwned = false; return rustString.ptr }())
 }
-public func mm_net_scan_interfaces() -> RustVec<MmInterfaceInfo> {
-    RustVec(ptr: __swift_bridge__$mm_net_scan_interfaces())
+public func mm_net_interface_count() -> UInt32 {
+    __swift_bridge__$mm_net_interface_count()
+}
+public func mm_net_interface_at(_ index: UInt32) -> Optional<MmInterfaceInfo> {
+    __swift_bridge__$mm_net_interface_at(index).intoSwiftRepr()
 }
 public func mm_net_snapshot() -> MmNetSnapshot {
     __swift_bridge__$mm_net_snapshot().intoSwiftRepr()
@@ -1425,7 +1428,6 @@ extension __swift_bridge__$Option$MmInterfaceInfo {
     }
 }
 public struct MmNetSnapshot {
-    public var interfaces: RustVec<MmInterfaceInfo>
     public var wifi_satisfied: Bool
     public var wired_satisfied: Bool
     public var usb_satisfied: Bool
@@ -1433,8 +1435,7 @@ public struct MmNetSnapshot {
     public var utun_available: Bool
     public var ipsec_available: Bool
 
-    public init(interfaces: RustVec<MmInterfaceInfo>,wifi_satisfied: Bool,wired_satisfied: Bool,usb_satisfied: Bool,bridge_satisfied: Bool,utun_available: Bool,ipsec_available: Bool) {
-        self.interfaces = interfaces
+    public init(wifi_satisfied: Bool,wired_satisfied: Bool,usb_satisfied: Bool,bridge_satisfied: Bool,utun_available: Bool,ipsec_available: Bool) {
         self.wifi_satisfied = wifi_satisfied
         self.wired_satisfied = wired_satisfied
         self.usb_satisfied = usb_satisfied
@@ -1445,13 +1446,13 @@ public struct MmNetSnapshot {
 
     @inline(__always)
     func intoFfiRepr() -> __swift_bridge__$MmNetSnapshot {
-        { let val = self; return __swift_bridge__$MmNetSnapshot(interfaces: { let val = val.interfaces; val.isOwned = false; return val.ptr }(), wifi_satisfied: val.wifi_satisfied, wired_satisfied: val.wired_satisfied, usb_satisfied: val.usb_satisfied, bridge_satisfied: val.bridge_satisfied, utun_available: val.utun_available, ipsec_available: val.ipsec_available); }()
+        { let val = self; return __swift_bridge__$MmNetSnapshot(wifi_satisfied: val.wifi_satisfied, wired_satisfied: val.wired_satisfied, usb_satisfied: val.usb_satisfied, bridge_satisfied: val.bridge_satisfied, utun_available: val.utun_available, ipsec_available: val.ipsec_available); }()
     }
 }
 extension __swift_bridge__$MmNetSnapshot {
     @inline(__always)
     func intoSwiftRepr() -> MmNetSnapshot {
-        { let val = self; return MmNetSnapshot(interfaces: RustVec(ptr: val.interfaces), wifi_satisfied: val.wifi_satisfied, wired_satisfied: val.wired_satisfied, usb_satisfied: val.usb_satisfied, bridge_satisfied: val.bridge_satisfied, utun_available: val.utun_available, ipsec_available: val.ipsec_available); }()
+        { let val = self; return MmNetSnapshot(wifi_satisfied: val.wifi_satisfied, wired_satisfied: val.wired_satisfied, usb_satisfied: val.usb_satisfied, bridge_satisfied: val.bridge_satisfied, utun_available: val.utun_available, ipsec_available: val.ipsec_available); }()
     }
 }
 extension __swift_bridge__$Option$MmNetSnapshot {
