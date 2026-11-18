@@ -3,6 +3,21 @@ name = "minimuxer"
 version = "0.1.0"
 edition = "2021"
 
+# Rust rewrite workspace (branch rust-rewrite). The legacy crate above stays
+# as the root package and keeps compiling untouched; the new implementation
+# grows in crates/mm-* per the port design (M1: mm-common + mm-ffi skeleton).
+[workspace]
+resolver = "2"
+members = [
+    "crates/mm-common",
+    "crates/mm-net",
+    "crates/mm-rp",
+    "crates/mm-gateway",
+    "crates/mm-emproxy",
+    "crates/mm-core",
+    "crates/mm-ffi",
+]
+
 [dependencies]
 rusty_libimobiledevice = { git = "https://github.com/SideStore/rusty_libimobiledevice", features = [
   "dynamic",

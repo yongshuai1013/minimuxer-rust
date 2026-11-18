@@ -1,0 +1,23 @@
+[package]
+name = "mm-ffi"
+version = "0.1.0"
+edition = "2021"
+description = "Minimuxer Rust rewrite: swift-bridge FFI boundary (global tokio runtime, EventSink registry, error/type conversion bus). Produces the staticlib packaged into MinimuxerRust.xcframework."
+
+[lib]
+name = "minimuxer_rust"
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+mm-common = { path = "../mm-common" }
+mm-net = { path = "../mm-net" }
+mm-rp = { path = "../mm-rp" }
+mm-gateway = { path = "../mm-gateway" }
+mm-emproxy = { path = "../mm-emproxy" }
+mm-core = { path = "../mm-core" }
+tokio = { version = "1.44", features = ["rt-multi-thread"] }
+once_cell = "1.21"
+swift-bridge = { git = "https://github.com/naturecodevoid/swift-bridge", features = ["async"] }
+
+[build-dependencies]
+swift-bridge-build = { git = "https://github.com/naturecodevoid/swift-bridge" }

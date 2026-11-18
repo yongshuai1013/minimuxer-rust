@@ -1,0 +1,8 @@
+[package]
+name = "mm-gateway"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+mm-common = { path = "../mm-common" }
+mm-rp = { path = "../mm-rp" }

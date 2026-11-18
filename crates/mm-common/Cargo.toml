@@ -1,0 +1,14 @@
+[package]
+name = "mm-common"
+version = "0.1.0"
+edition = "2021"
+description = "Minimuxer Rust rewrite: shared constants, pairing-file model/parser, TCP probe, unified error bus (port of Swift MinimuxerCommon, subsystem 12)."
+
+[dependencies]
+plist = "1"
+serde = { version = "1", features = ["derive"] }
+libc = "0.2"
+
+[build-dependencies]
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"

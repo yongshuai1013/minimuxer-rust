@@ -1,0 +1,395 @@
+# error-map.toml -- SINGLE SOURCE OF TRUTH for the minimuxer error bus.
+#
+# Every error case that can cross the Rust/Swift FFI boundary is listed here
+# exactly once, mirroring the Swift package (yongshuai1013/minimuxer
+# @714aafa3). mm-common's build.rs turns this file into the Rust-side lookup
+# table (ERROR_CASES); the Swift shell's conversion table is generated from
+# the same file in a later milestone, so the two sides cannot drift.
+#
+# Fields per case:
+#   domain      -- Swift error type name (MmErrorInfo.domain)
+#   code        -- Swift case name, verbatim (MmErrorInfo.code)
+#   description -- Swift `description` rendering; placeholders:
+#                  {reason}       the reason string payload
+#                  {protocol}     PairingProtocol raw value (payload cases)
+#                  {missing_keys} comma-joined missing keys (PairingError)
+#                  {code}         numeric payload (EMProxyError.unknownError)
+#                  {component}    MinimuxerComponent raw value (service wrapper)
+#   description_empty_reason -- optional; used instead of `description`
+#                  when the reason is empty (DeviceGatewayError semantics).
+#
+# Payload encoding across the boundary (MmErrorInfo has only
+# domain/code/reason): extra payloads are encoded into `reason`:
+#   MinimuxerError.invalidPairing / .mount : "<protocol>\u{1}<reason>"
+#   PairingError.incomplete                : "<protocol>\u{1}<key1,key2,...>"
+#   EMProxyError.unknownError              : "<i32>"
+# (\u{1} = unit separator; encoding/decoding lives in mm-common::error.)
+
+[[case]]
+domain = "MinimuxerError"
+code = "noDevice"
+description = "NoDevice: {reason}"
+
+[[case]]
+domain = "MinimuxerError"
+code = "noConnection"
+description = "NoConnection: {reason}"
+
+[[case]]
+domain = "MinimuxerError"
+code = "notReachable"
+description = "NotReachable: {reason}"
+
+[[case]]
+domain = "MinimuxerError"
+code = "noVPN"
+description = "NoVPN: {reason}"
+
+[[case]]
+domain = "MinimuxerError"
+code = "notStarted"
+description = "NotStarted: {reason}"
+
+[[case]]
+domain = "MinimuxerError"
+code = "pairingNotLoaded"
+description = "PairingNotLoaded: {reason}"
+
+[[case]]
+domain = "MinimuxerError"
+code = "connectionModeNotConfigured"
+description = "ConnectionModeNotConfigured: {reason}"
+
+[[case]]
+domain = "MinimuxerError"
+code = "restartAlreadyInProgressError"
+description = "RestartAlreadyInProgressError: {reason}"
+
+[[case]]
+domain = "MinimuxerError"
+code = "invalidVPN"
+description = "InvalidVPN: {reason}"
+
+[[case]]
+domain = "MinimuxerError"
+code = "invalidPairing"
+description = "InvalidPairing(protocol: {protocol}, reason: {reason})"
+
+[[case]]
+domain = "MinimuxerError"
+code = "muxerNotListening"
+description = "MuxerNotListening: {reason}"
+
+[[case]]
+domain = "MinimuxerError"
+code = "createDebug"
+description = "CreateDebug: {reason}"
+
+[[case]]
+domain = "MinimuxerError"
+code = "createInstproxy"
+description = "CreateInstproxy: {reason}"
+
+[[case]]
+domain = "MinimuxerError"
+code = "createLockdown"
+description = "CreateLockdown: {reason}"
+
+[[case]]
+domain = "MinimuxerError"
+code = "createCoreDevice"
+description = "CreateCoreDevice: {reason}"
+
+[[case]]
+domain = "MinimuxerError"
+code = "createSoftwareTunnel"
+description = "CreateSoftwareTunnel: {reason}"
+
+[[case]]
+domain = "MinimuxerError"
+code = "createRemoteServer"
+description = "CreateRemoteServer: {reason}"
+
+[[case]]
+domain = "MinimuxerError"
+code = "createProcessControl"
+description = "CreateProcessControl: {reason}"
+
+[[case]]
+domain = "MinimuxerError"
+code = "getLockdownValue"
+description = "GetLockdownValue: {reason}"
+
+[[case]]
+domain = "MinimuxerError"
+code = "fetchUDID"
+description = "FetchUDID: {reason}"
+
+[[case]]
+domain = "MinimuxerError"
+code = "connect"
+description = "Connect: {reason}"
+
+[[case]]
+domain = "MinimuxerError"
+code = "close"
+description = "Close: {reason}"
+
+[[case]]
+domain = "MinimuxerError"
+code = "xpcHandshake"
+description = "XpcHandshake: {reason}"
+
+[[case]]
+domain = "MinimuxerError"
+code = "noService"
+description = "NoService: {reason}"
+
+[[case]]
+domain = "MinimuxerError"
+code = "invalidProductVersion"
+description = "InvalidProductVersion: {reason}"
+
+[[case]]
+domain = "MinimuxerError"
+code = "lookupApps"
+description = "LookupApps: {reason}"
+
+[[case]]
+domain = "MinimuxerError"
+code = "findApp"
+description = "FindApp: {reason}"
+
+[[case]]
+domain = "MinimuxerError"
+code = "bundlePath"
+description = "BundlePath: {reason}"
+
+[[case]]
+domain = "MinimuxerError"
+code = "maxPacket"
+description = "MaxPacket: {reason}"
+
+[[case]]
+domain = "MinimuxerError"
+code = "workingDirectory"
+description = "WorkingDirectory: {reason}"
+
+[[case]]
+domain = "MinimuxerError"
+code = "argv"
+description = "Argv: {reason}"
+
+[[case]]
+domain = "MinimuxerError"
+code = "launchSuccess"
+description = "LaunchSuccess: {reason}"
+
+[[case]]
+domain = "MinimuxerError"
+code = "detach"
+description = "Detach: {reason}"
+
+[[case]]
+domain = "MinimuxerError"
+code = "attach"
+description = "Attach: {reason}"
+
+[[case]]
+domain = "MinimuxerError"
+code = "createAfc"
+description = "CreateAfc: {reason}"
+
+[[case]]
+domain = "MinimuxerError"
+code = "rwAfc"
+description = "RwAfc: {reason}"
+
+[[case]]
+domain = "MinimuxerError"
+code = "installApp"
+description = "InstallApp({reason})"
+
+[[case]]
+domain = "MinimuxerError"
+code = "uninstallApp"
+description = "UninstallApp: {reason}"
+
+[[case]]
+domain = "MinimuxerError"
+code = "createMisagent"
+description = "CreateMisagent: {reason}"
+
+[[case]]
+domain = "MinimuxerError"
+code = "profileInstall"
+description = "ProfileInstall: {reason}"
+
+[[case]]
+domain = "MinimuxerError"
+code = "profileRemove"
+description = "ProfileRemove: {reason}"
+
+[[case]]
+domain = "MinimuxerError"
+code = "createFolder"
+description = "CreateFolder: {reason}"
+
+[[case]]
+domain = "MinimuxerError"
+code = "downloadImage"
+description = "DownloadImage: {reason}"
+
+[[case]]
+domain = "MinimuxerError"
+code = "imageLookup"
+description = "ImageLookup: {reason}"
+
+[[case]]
+domain = "MinimuxerError"
+code = "imageRead"
+description = "ImageRead: {reason}"
+
+[[case]]
+domain = "MinimuxerError"
+code = "mount"
+description = "Mount(protocol: {protocol}, reason: {reason})"
+
+[[case]]
+domain = "DeviceGatewayError"
+code = "invalidPairingFile"
+description = "The pairing file is invalid: {reason}"
+
+[[case]]
+domain = "DeviceGatewayError"
+code = "connectionFailed"
+description = "Failed to connect to device: {reason}"
+
+[[case]]
+domain = "DeviceGatewayError"
+code = "serviceError"
+description = "Service operation failed: {reason}"
+
+[[case]]
+domain = "DeviceGatewayError"
+code = "noConnection"
+description = "{reason}"
+description_empty_reason = "No connection to the device."
+
+[[case]]
+domain = "DeviceGatewayError"
+code = "notInitialized"
+description = "{reason}"
+description_empty_reason = "DeviceGateway not initialized. start() should be called first."
+
+[[case]]
+domain = "DeviceGatewayError"
+code = "deviceEndpointIpNotAvailable"
+description = "{reason}"
+description_empty_reason = "Device endpoint IP is not available."
+
+[[case]]
+domain = "DeviceGatewayError"
+code = "invalidTargetEndpoint"
+description = "{reason}"
+description_empty_reason = "Invalid target endpoint IP or port."
+
+[[case]]
+domain = "DeviceGatewayError"
+code = "unsupportedOperation"
+description = "Operation '{reason}' is not supported."
+
+[[case]]
+domain = "PairingError"
+code = "unreadable"
+description = "The pairing file could not be read: {reason}"
+
+[[case]]
+domain = "PairingError"
+code = "invalidPlist"
+description = "The pairing file could not be parsed as a property list (plist): {reason}"
+
+[[case]]
+domain = "PairingError"
+code = "incomplete"
+description = "The pairing file is incomplete for .{protocol}. Missing keys: {missing_keys}."
+
+[[case]]
+domain = "PairingError"
+code = "ambiguous"
+description = "The pairing file format is ambiguous: {reason}"
+
+[[case]]
+domain = "EMProxyError"
+code = "invalidBindAddressPointer"
+description = "Invalid bind address pointer"
+
+[[case]]
+domain = "EMProxyError"
+code = "invalidUTF8String"
+description = "Failed to convert bind address to UTF-8"
+
+[[case]]
+domain = "EMProxyError"
+code = "invalidSocketAddress"
+description = "Invalid IPv4 socket address format: {reason}"
+
+[[case]]
+domain = "EMProxyError"
+code = "socketBindFailed"
+description = "Failed to bind to UDP socket address"
+
+[[case]]
+domain = "EMProxyError"
+code = "cryptoInitFailed"
+description = "Failed to initialize EMProxy crypto keys"
+
+[[case]]
+domain = "EMProxyError"
+code = "serverNotRunning"
+description = "EMProxy server is not running"
+
+[[case]]
+domain = "EMProxyError"
+code = "stopSignalFailed"
+description = "Failed to send stop signal to EMProxy server"
+
+[[case]]
+domain = "EMProxyError"
+code = "threadJoinFailed"
+description = "Failed to join EMProxy loopback thread"
+
+[[case]]
+domain = "EMProxyError"
+code = "handshakeClientNotConfigured"
+description = "EMProxy WireGuard VPN handshake client not configured"
+
+[[case]]
+domain = "EMProxyError"
+code = "unknownError"
+description = "EMProxy error code: {code}"
+
+[[case]]
+domain = "MinimuxerInternalError"
+code = "deviceEndpointNotInitialized"
+description = "DeviceEndpointNotInitialized"
+
+[[case]]
+domain = "MinimuxerInternalError"
+code = "networkIfaceNotRefreshed"
+description = "NetworkIfaceNotRefreshed"
+
+[[case]]
+domain = "MinimuxerInternalError"
+code = "pairingFailed"
+description = "PairingFailed({reason})"
+
+[[case]]
+domain = "MinimuxerServiceError"
+code = "heartbeat"
+description = "[{component}] {reason}"
+
+[[case]]
+domain = "MinimuxerServiceError"
+code = "mounter"
+description = "[{component}] {reason}"

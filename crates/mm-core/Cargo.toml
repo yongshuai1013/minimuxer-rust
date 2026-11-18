@@ -1,0 +1,11 @@
+[package]
+name = "mm-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+mm-common = { path = "../mm-common" }
+mm-net = { path = "../mm-net" }
+mm-rp = { path = "../mm-rp" }
+mm-gateway = { path = "../mm-gateway" }
+mm-emproxy = { path = "../mm-emproxy" }

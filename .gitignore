@@ -14,3 +14,7 @@
 *.swift
 *.h
 module.modulemap*
+
+# mm-ffi generated Swift bindings ARE checked in: the SideStore build
+# consumes them (plus the xcframework) with no Rust toolchain present.
+!/crates/mm-ffi/generated/**
