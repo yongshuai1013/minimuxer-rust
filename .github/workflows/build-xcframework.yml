@@ -70,6 +70,34 @@ jobs:
       - name: Error table drift check (shell)
         run: python3 Scripts/generate-error-table.py --check
 
+  probe:
+    name: Shim emission probe (dispatch only)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile bindings and nm the objects
+        run: |
+          set -x
+          mkdir -p /tmp/probe && cd /tmp/probe
+          cp "$GITHUB_WORKSPACE/Common/Bindings/minimuxer_rust.swift" .
+          cp "$GITHUB_WORKSPACE/Common/Bindings/SwiftBridgeCore.swift" .
+          cp "$GITHUB_WORKSPACE/Common/Bindings/ShellSinks.swift" .
+          HDRS="$GITHUB_WORKSPACE/crates/mm-ffi/generated"
+          ls "$HDRS"
+          for MODE in wmo plain onone; do
+            case $MODE in
+              wmo) OPTS="-O -whole-module-optimization";;
+              plain) OPTS="-O";;
+              onone) OPTS="-Onone";;
+            esac
+            xcrun swiftc $OPTS -emit-object -module-name MinimuxerRustBindings -I "$HDRS" minimuxer_rust.swift SwiftBridgeCore.swift ShellSinks.swift -o probe-$MODE.o 2>&1 | head -8 || true
+            echo "== $MODE: MmEventSink symbols =="
+            nm probe-$MODE.o 2>/dev/null | grep -i "MmEventSink" | head -8 || true
+            echo "== $MODE: swift_bridge symbol count =="
+            nm probe-$MODE.o 2>/dev/null | grep -c "swift_bridge" || true
+          done
+
   xcframework:
     name: Build MinimuxerRust.xcframework
     runs-on: macos-15
