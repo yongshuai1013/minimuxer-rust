@@ -1966,7 +1966,7 @@ mod tests {
     fn parse_pairing_crosses_boundary() {
         let ok = mm_parse_pairing_file(LOCKDOWN_XML.to_string(), None);
         assert!(ok.success);
-        assert!(matches!(ok.protocol, ffi::MmPairingProtocol::Lockdown));
+        assert!(matches!(ok.pairing_protocol, ffi::MmPairingProtocol::Lockdown));
 
         let bad = mm_parse_pairing_file("nope".to_string(), None);
         assert!(!bad.success);
