@@ -10,11 +10,11 @@
 //!   rusty_libimobiledevice, whose usbmuxd lookups are retargeted to
 //!   the mm-core usbmuxd proxy (Swift `withDevice`/`withLockdown`).
 //!
-//! RemotePairing connection paths land in M7 (mm-rp); until then
-//! rppairing-mode operations return `unsupportedOperation`, per the
-//! design's no-fake-compatibility rule. The line-by-line Swift
-//! comparison this implementation follows is
-//! `docs/m3-gateway-diff.md` in the repo.
+//! RemotePairing connection paths landed in M7 (mm-rp); the
+//! remaining `unsupportedOperation` returns are Swift same-shape
+//! replications, inventoried in `docs/m9-equivalence-audit.md`
+//! appendix A. The line-by-line Swift comparison this
+//! implementation follows is `docs/m3-gateway-diff.md` in the repo.
 //!
 //! M5 adds the operation surface (install pipeline, DDI mount
 //! bodies, debugserver basics) for the lockdown paths of both

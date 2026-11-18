@@ -298,6 +298,15 @@ async fn probe_with_source(
                 .await
                 .unwrap_or(false);
                 if new_reachable {
+                    // Drift instrumentation (M9 audit §5): a win via
+                    // the resolveServicePort path must be visible as
+                    // such in the log — the candidate-source line in
+                    // `resolve_local_vpn_tunnel` alone cannot
+                    // distinguish it from a direct-port win.
+                    debug_log(&format!(
+                        "[minimuxer] [iface] candidate peer {} won via resolveServicePort (port {} -> {})",
+                        ip_owned, current_port, resolved.port
+                    ));
                     port_source.set_port(resolved.port, current_protocol);
                     reachable = true;
                 }

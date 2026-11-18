@@ -196,24 +196,26 @@ pub trait DeviceGateway: Send + Sync {
     /// returning the device-reported interval — or the input
     /// interval when the device reports none (both Swift backends
     /// end with `newInterval > 0 ? newInterval : interval`).
-    /// Landed in M4 for the lockdown paths; the RP paths report
-    /// `unsupportedOperation` until M7. The default (test doubles)
-    /// reports unsupported.
+    /// Both backends override this for the lockdown (M4) and RP
+    /// (M7) paths. The trait default only serves test doubles and
+    /// reports unsupported (M9 audit appendix A, class b-cleaned).
     fn perform_heartbeat<'a>(&'a self, _interval: u64) -> GatewayFuture<'a, u64> {
         Box::pin(async move { Err(unsupported("performHeartbeat")) })
     }
 
-    /// Swift `isDDIMounted()`. The query lands per backend in
-    /// M5; the default (test doubles) reports unsupported.
+    /// Swift `isDDIMounted()`. Both backends override this
+    /// (M5); the default only serves test doubles.
     fn is_ddi_mounted<'a>(&'a self) -> GatewayFuture<'a, bool> {
         Box::pin(async move { Err(unsupported("isDDIMounted")) })
     }
 
-    // -- M5 operation surface (diff list docs/m5-install-ddi-debug-diff.md).
-    // Defaults report `unsupportedOperation` with the Swift
-    // operation name; both backends override the lockdown paths.
-    // The RP paths stay unsupported until M7 in the backends
-    // themselves.
+    // -- Operation surface (diff lists docs/m5-install-ddi-debug-diff.md,
+    // docs/m7-rp-diff.md). Defaults report `unsupportedOperation`
+    // with the Swift operation name and only serve test doubles;
+    // both backends override every operation below for the
+    // lockdown and RP paths (M5/M7). The remaining same-shape
+    // unsupported returns live inside the backends themselves
+    // (M9 audit appendix A, class a).
 
     /// Swift `mountDeveloperImage(image:signature:)` (pre-17 DDI).
     fn mount_developer_image<'a>(
