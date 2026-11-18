@@ -1459,11 +1459,14 @@ dependencies = [
 name = "mm-core"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "mm-common",
  "mm-emproxy",
  "mm-gateway",
  "mm-net",
  "mm-rp",
+ "plist",
+ "tokio",
 ]
 
 [[package]]

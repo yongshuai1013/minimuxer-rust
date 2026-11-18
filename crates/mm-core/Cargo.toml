@@ -9,3 +9,6 @@ mm-net = { path = "../mm-net" }
 mm-rp = { path = "../mm-rp" }
 mm-gateway = { path = "../mm-gateway" }
 mm-emproxy = { path = "../mm-emproxy" }
+plist = "1"
+libc = "0.2"
+tokio = { version = "1.44", features = ["rt", "sync", "time", "net", "io-util", "macros"] }
