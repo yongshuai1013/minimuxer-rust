@@ -111,7 +111,7 @@ public enum PairingFileParser {
         guard outcome.success else {
             throw mmPairingError(from: outcome.error)
         }
-        return outcome.protocol.pairingProtocol
+        return outcome.pairing_protocol.pairingProtocol
     }
 
     public static func parse(content: String, preferred: PairingProtocol? = nil) throws -> any PairingFile {
@@ -126,7 +126,7 @@ public enum PairingFileParser {
         guard outcome.success else {
             throw mmPairingError(from: outcome.error)
         }
-        switch outcome.protocol {
+        switch outcome.pairing_protocol {
             case .RpPairing:
                 return try RPPairingFile(content: content, plist: plist, data: data)
             case .Lockdown:

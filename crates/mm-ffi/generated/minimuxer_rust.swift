@@ -97,8 +97,8 @@ public func mm_net_clear_connection_config() {
 public func mm_net_set_probe_timeout(_ timeout_ms: Int32) {
     __swift_bridge__$mm_net_set_probe_timeout(timeout_ms)
 }
-public func mm_net_complete_service_port(_ request_id: UInt64, _ protocol: MmPairingProtocol, _ port: UInt16) -> Bool {
-    __swift_bridge__$mm_net_complete_service_port(request_id, protocol.intoFfiRepr(), port)
+public func mm_net_complete_service_port(_ request_id: UInt64, _ pairing_protocol: MmPairingProtocol, _ port: UInt16) -> Bool {
+    __swift_bridge__$mm_net_complete_service_port(request_id, pairing_protocol.intoFfiRepr(), port)
 }
 public func mm_gateway_backend() -> MmGatewayBackend {
     __swift_bridge__$mm_gateway_backend().intoSwiftRepr()
@@ -163,11 +163,11 @@ public func mm_gateway_set_endpoint_ip<GenericIntoRustString: IntoRustString>(_ 
 public func mm_gateway_pairing_protocol() -> MmPairingProtocol {
     __swift_bridge__$mm_gateway_pairing_protocol().intoSwiftRepr()
 }
-public func mm_gateway_service_port(_ protocol: MmPairingProtocol) -> UInt16 {
-    __swift_bridge__$mm_gateway_service_port(protocol.intoFfiRepr())
+public func mm_gateway_service_port(_ pairing_protocol: MmPairingProtocol) -> UInt16 {
+    __swift_bridge__$mm_gateway_service_port(pairing_protocol.intoFfiRepr())
 }
-public func mm_gateway_set_port(_ port: UInt16, _ protocol: MmPairingProtocol) {
-    __swift_bridge__$mm_gateway_set_port(port, protocol.intoFfiRepr())
+public func mm_gateway_set_port(_ port: UInt16, _ pairing_protocol: MmPairingProtocol) {
+    __swift_bridge__$mm_gateway_set_port(port, pairing_protocol.intoFfiRepr())
 }
 public func mm_gateway_fetch_udid() async -> MmStringOutcome {
     func onComplete(cbWrapperPtr: UnsafeMutableRawPointer?, rustFnRetVal: __swift_bridge__$MmStringOutcome) {
@@ -1100,8 +1100,8 @@ func __swift_bridge__MmConnectionConfig_get_remote_server_ip (_ this: UnsafeMuta
 }
 
 @_cdecl("__swift_bridge__$MmConnectionConfig$request_service_port")
-func __swift_bridge__MmConnectionConfig_request_service_port (_ this: UnsafeMutableRawPointer, _ request_id: UInt64, _ protocol: __swift_bridge__$MmPairingProtocol, _ port: UInt16) {
-    Unmanaged<MmConnectionConfig>.fromOpaque(this).takeUnretainedValue().request_service_port(request_id: request_id, protocol: protocol.intoSwiftRepr(), port: port)
+func __swift_bridge__MmConnectionConfig_request_service_port (_ this: UnsafeMutableRawPointer, _ request_id: UInt64, _ pairing_protocol: __swift_bridge__$MmPairingProtocol, _ port: UInt16) {
+    Unmanaged<MmConnectionConfig>.fromOpaque(this).takeUnretainedValue().request_service_port(request_id: request_id, pairing_protocol: pairing_protocol.intoSwiftRepr(), port: port)
 }
 
 @_cdecl("__swift_bridge__$MmWirelessPairSink$on_pin_received")
@@ -1252,24 +1252,24 @@ extension MmPairingProtocol: Vectorizable {
 }
 public struct MmPairingOutcome {
     public var success: Bool
-    public var protocol: MmPairingProtocol
+    public var pairing_protocol: MmPairingProtocol
     public var error: MmErrorInfo
 
-    public init(success: Bool,protocol: MmPairingProtocol,error: MmErrorInfo) {
+    public init(success: Bool,pairing_protocol: MmPairingProtocol,error: MmErrorInfo) {
         self.success = success
-        self.protocol = protocol
+        self.pairing_protocol = pairing_protocol
         self.error = error
     }
 
     @inline(__always)
     func intoFfiRepr() -> __swift_bridge__$MmPairingOutcome {
-        { let val = self; return __swift_bridge__$MmPairingOutcome(success: val.success, protocol: val.protocol.intoFfiRepr(), error: val.error.intoFfiRepr()); }()
+        { let val = self; return __swift_bridge__$MmPairingOutcome(success: val.success, pairing_protocol: val.pairing_protocol.intoFfiRepr(), error: val.error.intoFfiRepr()); }()
     }
 }
 extension __swift_bridge__$MmPairingOutcome {
     @inline(__always)
     func intoSwiftRepr() -> MmPairingOutcome {
-        { let val = self; return MmPairingOutcome(success: val.success, protocol: val.protocol.intoSwiftRepr(), error: val.error.intoSwiftRepr()); }()
+        { let val = self; return MmPairingOutcome(success: val.success, pairing_protocol: val.pairing_protocol.intoSwiftRepr(), error: val.error.intoSwiftRepr()); }()
     }
 }
 extension __swift_bridge__$Option$MmPairingOutcome {

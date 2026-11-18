@@ -16,7 +16,7 @@ __swift_bridge__$Option$MmPairingProtocol __swift_bridge__$Vec_MmPairingProtocol
 uintptr_t __swift_bridge__$Vec_MmPairingProtocol$len(void* vec_ptr);
 void* __swift_bridge__$Vec_MmPairingProtocol$as_ptr(void* vec_ptr);
 
-typedef struct __swift_bridge__$MmPairingOutcome { bool success; struct __swift_bridge__$MmPairingProtocol protocol; struct __swift_bridge__$MmErrorInfo error; } __swift_bridge__$MmPairingOutcome;
+typedef struct __swift_bridge__$MmPairingOutcome { bool success; struct __swift_bridge__$MmPairingProtocol pairing_protocol; struct __swift_bridge__$MmErrorInfo error; } __swift_bridge__$MmPairingOutcome;
 typedef struct __swift_bridge__$Option$MmPairingOutcome { bool is_some; __swift_bridge__$MmPairingOutcome val; } __swift_bridge__$Option$MmPairingOutcome;
 typedef enum __swift_bridge__$MmConnectionModeTag { __swift_bridge__$MmConnectionMode$LocalVpn, __swift_bridge__$MmConnectionMode$RemoteServer, __swift_bridge__$MmConnectionMode$NotConfigured, } __swift_bridge__$MmConnectionModeTag;
 typedef struct __swift_bridge__$MmConnectionMode { __swift_bridge__$MmConnectionModeTag tag; } __swift_bridge__$MmConnectionMode;
@@ -115,7 +115,7 @@ bool __swift_bridge__$mm_net_observer_stop(void);
 void __swift_bridge__$mm_net_bind_connection_config(void* config);
 void __swift_bridge__$mm_net_clear_connection_config(void);
 void __swift_bridge__$mm_net_set_probe_timeout(int32_t timeout_ms);
-bool __swift_bridge__$mm_net_complete_service_port(uint64_t request_id, struct __swift_bridge__$MmPairingProtocol protocol, uint16_t port);
+bool __swift_bridge__$mm_net_complete_service_port(uint64_t request_id, struct __swift_bridge__$MmPairingProtocol pairing_protocol, uint16_t port);
 struct __swift_bridge__$MmGatewayBackend __swift_bridge__$mm_gateway_backend(void);
 void __swift_bridge__$mm_gateway_set_backend(struct __swift_bridge__$MmGatewayBackend backend);
 bool __swift_bridge__$mm_gateway_requires_usbmuxd(void);
@@ -123,8 +123,8 @@ void __swift_bridge__$mm_gateway_start(void* callback_wrapper, void __swift_brid
 void __swift_bridge__$mm_gateway_stop(void* callback_wrapper, void __swift_bridge__$mm_gateway_stop$async(void* callback_wrapper, struct __swift_bridge__$MmOutcome ret));
 void __swift_bridge__$mm_gateway_set_endpoint_ip(void* ip);
 struct __swift_bridge__$MmPairingProtocol __swift_bridge__$mm_gateway_pairing_protocol(void);
-uint16_t __swift_bridge__$mm_gateway_service_port(struct __swift_bridge__$MmPairingProtocol protocol);
-void __swift_bridge__$mm_gateway_set_port(uint16_t port, struct __swift_bridge__$MmPairingProtocol protocol);
+uint16_t __swift_bridge__$mm_gateway_service_port(struct __swift_bridge__$MmPairingProtocol pairing_protocol);
+void __swift_bridge__$mm_gateway_set_port(uint16_t port, struct __swift_bridge__$MmPairingProtocol pairing_protocol);
 void __swift_bridge__$mm_gateway_fetch_udid(void* callback_wrapper, void __swift_bridge__$mm_gateway_fetch_udid$async(void* callback_wrapper, struct __swift_bridge__$MmStringOutcome ret));
 void __swift_bridge__$mm_gateway_get_lockdown_value(void* callback_wrapper, void __swift_bridge__$mm_gateway_get_lockdown_value$async(void* callback_wrapper, struct __swift_bridge__$MmStringOutcome ret), void* key);
 void __swift_bridge__$mm_gateway_start_session(void* callback_wrapper, void __swift_bridge__$mm_gateway_start_session$async(void* callback_wrapper, struct __swift_bridge__$MmOutcome ret));

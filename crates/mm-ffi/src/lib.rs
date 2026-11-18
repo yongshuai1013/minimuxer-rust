@@ -71,7 +71,7 @@ mod ffi {
     #[swift_bridge(swift_repr = "struct")]
     struct MmPairingOutcome {
         success: bool,
-        protocol: MmPairingProtocol,
+        pairing_protocol: MmPairingProtocol,
         error: MmErrorInfo,
     }
 
@@ -263,7 +263,7 @@ mod ffi {
         fn mm_net_set_probe_timeout(timeout_ms: i32);
         fn mm_net_complete_service_port(
             request_id: u64,
-            protocol: MmPairingProtocol,
+            pairing_protocol: MmPairingProtocol,
             port: u16,
         ) -> bool;
 
@@ -280,8 +280,8 @@ mod ffi {
         async fn mm_gateway_stop() -> MmOutcome;
         fn mm_gateway_set_endpoint_ip(ip: Option<String>);
         fn mm_gateway_pairing_protocol() -> MmPairingProtocol;
-        fn mm_gateway_service_port(protocol: MmPairingProtocol) -> u16;
-        fn mm_gateway_set_port(port: u16, protocol: MmPairingProtocol);
+        fn mm_gateway_service_port(pairing_protocol: MmPairingProtocol) -> u16;
+        fn mm_gateway_set_port(port: u16, pairing_protocol: MmPairingProtocol);
         async fn mm_gateway_fetch_udid() -> MmStringOutcome;
         async fn mm_gateway_get_lockdown_value(key: String) -> MmStringOutcome;
         async fn mm_gateway_start_session() -> MmOutcome;
@@ -423,7 +423,7 @@ mod ffi {
         fn request_service_port(
             self: &MmConnectionConfig,
             request_id: u64,
-            protocol: MmPairingProtocol,
+            pairing_protocol: MmPairingProtocol,
             port: u16,
         );
 
@@ -561,12 +561,12 @@ fn mm_parse_pairing_file(
     match mm_common::parse_pairing_content(&content, preferred) {
         Ok(file) => ffi::MmPairingOutcome {
             success: true,
-            protocol: ffi::MmPairingProtocol::from_common(file.mode()),
+            pairing_protocol: ffi::MmPairingProtocol::from_common(file.mode()),
             error: mm_common::MmErrorInfo::new("", "", "").into(),
         },
         Err(err) => ffi::MmPairingOutcome {
             success: false,
-            protocol: ffi::MmPairingProtocol::Unknown,
+            pairing_protocol: ffi::MmPairingProtocol::Unknown,
             error: err.to_info().into(),
         },
     }
@@ -895,13 +895,13 @@ fn mm_net_set_probe_timeout(timeout_ms: i32) {
 
 fn mm_net_complete_service_port(
     request_id: u64,
-    protocol: ffi::MmPairingProtocol,
+    pairing_protocol: ffi::MmPairingProtocol,
     port: u16,
 ) -> bool {
     let sender = PORT_REQUESTS.lock().unwrap().remove(&request_id);
     match sender {
         Some(tx) => tx
-            .send(mm_net::ServicePort::new(protocol.to_common(), port))
+            .send(mm_net::ServicePort::new(pairing_protocol.to_common(), port))
             .is_ok(),
         None => false,
     }
@@ -1028,15 +1028,15 @@ fn mm_gateway_pairing_protocol() -> ffi::MmPairingProtocol {
     ffi::MmPairingProtocol::from_common(gateway_hub().pairing_file_type())
 }
 
-fn mm_gateway_service_port(protocol: ffi::MmPairingProtocol) -> u16 {
+fn mm_gateway_service_port(pairing_protocol: ffi::MmPairingProtocol) -> u16 {
     gateway_hub()
         .ensure_gateway()
-        .get_port(protocol.to_common())
+        .get_port(pairing_protocol.to_common())
 }
 
-fn mm_gateway_set_port(port: u16, protocol: ffi::MmPairingProtocol) {
+fn mm_gateway_set_port(port: u16, pairing_protocol: ffi::MmPairingProtocol) {
     use mm_net::ServicePortSource;
-    gateway_hub().set_port(port, protocol.to_common());
+    gateway_hub().set_port(port, pairing_protocol.to_common());
 }
 
 async fn mm_gateway_fetch_udid() -> ffi::MmStringOutcome {

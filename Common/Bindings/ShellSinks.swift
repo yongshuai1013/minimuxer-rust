@@ -91,8 +91,8 @@ public final class MmConnectionConfig {
         (getRemoteServerIp?() ?? "").intoRustString()
     }
 
-    public func request_service_port(request_id: UInt64, protocol: MmPairingProtocol, port: UInt16) {
-        requestServicePort?(request_id, protocol, port)
+    public func request_service_port(request_id: UInt64, pairing_protocol: MmPairingProtocol, port: UInt16) {
+        requestServicePort?(request_id, pairing_protocol, port)
     }
 }
 
