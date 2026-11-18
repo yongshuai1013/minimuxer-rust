@@ -352,6 +352,216 @@ public func mm_proxy_notify_attached<GenericIntoRustString: IntoRustString>(_ pe
 public func mm_proxy_notify_detached() {
     __swift_bridge__$mm_proxy_notify_detached()
 }
+public func mm_core_start<GenericIntoRustString: IntoRustString>(_ content: GenericIntoRustString, _ docs_path: GenericIntoRustString, _ preferred: Optional<MmPairingProtocol>) async -> MmOutcome {
+    func onComplete(cbWrapperPtr: UnsafeMutableRawPointer?, rustFnRetVal: __swift_bridge__$MmOutcome) {
+        let wrapper = Unmanaged<CbWrapper$mm_core_start>.fromOpaque(cbWrapperPtr!).takeRetainedValue()
+        wrapper.cb(.success(rustFnRetVal.intoSwiftRepr()))
+    }
+
+    return await withCheckedContinuation({ (continuation: CheckedContinuation<MmOutcome, Never>) in
+        let callback = { rustFnRetVal in
+            continuation.resume(with: rustFnRetVal)
+        }
+
+        let wrapper = CbWrapper$mm_core_start(cb: callback)
+        let wrapperPtr = Unmanaged.passRetained(wrapper).toOpaque()
+
+        __swift_bridge__$mm_core_start(wrapperPtr, onComplete, { let rustString = content.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), { let rustString = docs_path.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), __swift_bridge__$Option$MmPairingProtocol.fromSwiftRepr(preferred))
+    })
+}
+class CbWrapper$mm_core_start {
+    var cb: (Result<MmOutcome, Never>) -> ()
+
+    public init(cb: @escaping (Result<MmOutcome, Never>) -> ()) {
+        self.cb = cb
+    }
+}
+public func mm_core_stop() async -> MmOutcome {
+    func onComplete(cbWrapperPtr: UnsafeMutableRawPointer?, rustFnRetVal: __swift_bridge__$MmOutcome) {
+        let wrapper = Unmanaged<CbWrapper$mm_core_stop>.fromOpaque(cbWrapperPtr!).takeRetainedValue()
+        wrapper.cb(.success(rustFnRetVal.intoSwiftRepr()))
+    }
+
+    return await withCheckedContinuation({ (continuation: CheckedContinuation<MmOutcome, Never>) in
+        let callback = { rustFnRetVal in
+            continuation.resume(with: rustFnRetVal)
+        }
+
+        let wrapper = CbWrapper$mm_core_stop(cb: callback)
+        let wrapperPtr = Unmanaged.passRetained(wrapper).toOpaque()
+
+        __swift_bridge__$mm_core_stop(wrapperPtr, onComplete)
+    })
+}
+class CbWrapper$mm_core_stop {
+    var cb: (Result<MmOutcome, Never>) -> ()
+
+    public init(cb: @escaping (Result<MmOutcome, Never>) -> ()) {
+        self.cb = cb
+    }
+}
+public func mm_core_restart() async -> MmOutcome {
+    func onComplete(cbWrapperPtr: UnsafeMutableRawPointer?, rustFnRetVal: __swift_bridge__$MmOutcome) {
+        let wrapper = Unmanaged<CbWrapper$mm_core_restart>.fromOpaque(cbWrapperPtr!).takeRetainedValue()
+        wrapper.cb(.success(rustFnRetVal.intoSwiftRepr()))
+    }
+
+    return await withCheckedContinuation({ (continuation: CheckedContinuation<MmOutcome, Never>) in
+        let callback = { rustFnRetVal in
+            continuation.resume(with: rustFnRetVal)
+        }
+
+        let wrapper = CbWrapper$mm_core_restart(cb: callback)
+        let wrapperPtr = Unmanaged.passRetained(wrapper).toOpaque()
+
+        __swift_bridge__$mm_core_restart(wrapperPtr, onComplete)
+    })
+}
+class CbWrapper$mm_core_restart {
+    var cb: (Result<MmOutcome, Never>) -> ()
+
+    public init(cb: @escaping (Result<MmOutcome, Never>) -> ()) {
+        self.cb = cb
+    }
+}
+public func mm_core_reinitialize_pairing_data<GenericIntoRustString: IntoRustString>(_ content: GenericIntoRustString) async -> MmOutcome {
+    func onComplete(cbWrapperPtr: UnsafeMutableRawPointer?, rustFnRetVal: __swift_bridge__$MmOutcome) {
+        let wrapper = Unmanaged<CbWrapper$mm_core_reinitialize_pairing_data>.fromOpaque(cbWrapperPtr!).takeRetainedValue()
+        wrapper.cb(.success(rustFnRetVal.intoSwiftRepr()))
+    }
+
+    return await withCheckedContinuation({ (continuation: CheckedContinuation<MmOutcome, Never>) in
+        let callback = { rustFnRetVal in
+            continuation.resume(with: rustFnRetVal)
+        }
+
+        let wrapper = CbWrapper$mm_core_reinitialize_pairing_data(cb: callback)
+        let wrapperPtr = Unmanaged.passRetained(wrapper).toOpaque()
+
+        __swift_bridge__$mm_core_reinitialize_pairing_data(wrapperPtr, onComplete, { let rustString = content.intoRustString(); rustString.isOwned = false; return rustString.ptr }())
+    })
+}
+class CbWrapper$mm_core_reinitialize_pairing_data {
+    var cb: (Result<MmOutcome, Never>) -> ()
+
+    public init(cb: @escaping (Result<MmOutcome, Never>) -> ()) {
+        self.cb = cb
+    }
+}
+public func mm_core_bind_connection_config(_ config: MmConnectionConfig) -> MmOutcome {
+    __swift_bridge__$mm_core_bind_connection_config(Unmanaged.passRetained(config).toOpaque()).intoSwiftRepr()
+}
+public func mm_core_is_ready(_ with_network_check: Bool, _ with_ddi_mount_check: Bool) async -> MmReadyOutcome {
+    func onComplete(cbWrapperPtr: UnsafeMutableRawPointer?, rustFnRetVal: __swift_bridge__$MmReadyOutcome) {
+        let wrapper = Unmanaged<CbWrapper$mm_core_is_ready>.fromOpaque(cbWrapperPtr!).takeRetainedValue()
+        wrapper.cb(.success(rustFnRetVal.intoSwiftRepr()))
+    }
+
+    return await withCheckedContinuation({ (continuation: CheckedContinuation<MmReadyOutcome, Never>) in
+        let callback = { rustFnRetVal in
+            continuation.resume(with: rustFnRetVal)
+        }
+
+        let wrapper = CbWrapper$mm_core_is_ready(cb: callback)
+        let wrapperPtr = Unmanaged.passRetained(wrapper).toOpaque()
+
+        __swift_bridge__$mm_core_is_ready(wrapperPtr, onComplete, with_network_check, with_ddi_mount_check)
+    })
+}
+class CbWrapper$mm_core_is_ready {
+    var cb: (Result<MmReadyOutcome, Never>) -> ()
+
+    public init(cb: @escaping (Result<MmReadyOutcome, Never>) -> ()) {
+        self.cb = cb
+    }
+}
+public func mm_core_fetch_udid() async -> MmStringOutcome {
+    func onComplete(cbWrapperPtr: UnsafeMutableRawPointer?, rustFnRetVal: __swift_bridge__$MmStringOutcome) {
+        let wrapper = Unmanaged<CbWrapper$mm_core_fetch_udid>.fromOpaque(cbWrapperPtr!).takeRetainedValue()
+        wrapper.cb(.success(rustFnRetVal.intoSwiftRepr()))
+    }
+
+    return await withCheckedContinuation({ (continuation: CheckedContinuation<MmStringOutcome, Never>) in
+        let callback = { rustFnRetVal in
+            continuation.resume(with: rustFnRetVal)
+        }
+
+        let wrapper = CbWrapper$mm_core_fetch_udid(cb: callback)
+        let wrapperPtr = Unmanaged.passRetained(wrapper).toOpaque()
+
+        __swift_bridge__$mm_core_fetch_udid(wrapperPtr, onComplete)
+    })
+}
+class CbWrapper$mm_core_fetch_udid {
+    var cb: (Result<MmStringOutcome, Never>) -> ()
+
+    public init(cb: @escaping (Result<MmStringOutcome, Never>) -> ()) {
+        self.cb = cb
+    }
+}
+public func mm_core_is_ddi_mounted() async -> MmReadyOutcome {
+    func onComplete(cbWrapperPtr: UnsafeMutableRawPointer?, rustFnRetVal: __swift_bridge__$MmReadyOutcome) {
+        let wrapper = Unmanaged<CbWrapper$mm_core_is_ddi_mounted>.fromOpaque(cbWrapperPtr!).takeRetainedValue()
+        wrapper.cb(.success(rustFnRetVal.intoSwiftRepr()))
+    }
+
+    return await withCheckedContinuation({ (continuation: CheckedContinuation<MmReadyOutcome, Never>) in
+        let callback = { rustFnRetVal in
+            continuation.resume(with: rustFnRetVal)
+        }
+
+        let wrapper = CbWrapper$mm_core_is_ddi_mounted(cb: callback)
+        let wrapperPtr = Unmanaged.passRetained(wrapper).toOpaque()
+
+        __swift_bridge__$mm_core_is_ddi_mounted(wrapperPtr, onComplete)
+    })
+}
+class CbWrapper$mm_core_is_ddi_mounted {
+    var cb: (Result<MmReadyOutcome, Never>) -> ()
+
+    public init(cb: @escaping (Result<MmReadyOutcome, Never>) -> ()) {
+        self.cb = cb
+    }
+}
+public func mm_core_mount_ddi<GenericIntoRustString: IntoRustString>(_ docs_path: GenericIntoRustString) async -> MmReadyOutcome {
+    func onComplete(cbWrapperPtr: UnsafeMutableRawPointer?, rustFnRetVal: __swift_bridge__$MmReadyOutcome) {
+        let wrapper = Unmanaged<CbWrapper$mm_core_mount_ddi>.fromOpaque(cbWrapperPtr!).takeRetainedValue()
+        wrapper.cb(.success(rustFnRetVal.intoSwiftRepr()))
+    }
+
+    return await withCheckedContinuation({ (continuation: CheckedContinuation<MmReadyOutcome, Never>) in
+        let callback = { rustFnRetVal in
+            continuation.resume(with: rustFnRetVal)
+        }
+
+        let wrapper = CbWrapper$mm_core_mount_ddi(cb: callback)
+        let wrapperPtr = Unmanaged.passRetained(wrapper).toOpaque()
+
+        __swift_bridge__$mm_core_mount_ddi(wrapperPtr, onComplete, { let rustString = docs_path.intoRustString(); rustString.isOwned = false; return rustString.ptr }())
+    })
+}
+class CbWrapper$mm_core_mount_ddi {
+    var cb: (Result<MmReadyOutcome, Never>) -> ()
+
+    public init(cb: @escaping (Result<MmReadyOutcome, Never>) -> ()) {
+        self.cb = cb
+    }
+}
+public func mm_core_set_params(_ backend: Optional<MmGatewayBackend>, _ remote_pairing_port: Optional<UInt16>, _ device_probe_timeout: Optional<Int32>) {
+    __swift_bridge__$mm_core_set_params(__swift_bridge__$Option$MmGatewayBackend.fromSwiftRepr(backend), remote_pairing_port.intoFfiRepr(), device_probe_timeout.intoFfiRepr())
+}
+public func mm_core_status() -> MmCoreStatus {
+    __swift_bridge__$mm_core_status().intoSwiftRepr()
+}
+public func mm_core_set_logging(_ enabled: Bool) {
+    __swift_bridge__$mm_core_set_logging(enabled)
+}
+public func mm_core_is_pairing_file_loaded() -> Bool {
+    __swift_bridge__$mm_core_is_pairing_file_loaded()
+}
+public func mm_core_last_beat_successful() -> Bool {
+    __swift_bridge__$mm_core_last_beat_successful()
+}
 @_cdecl("__swift_bridge__$MmEventSink$on_log")
 func __swift_bridge__MmEventSink_on_log (_ this: UnsafeMutableRawPointer, _ message: UnsafeMutableRawPointer) {
     Unmanaged<MmEventSink>.fromOpaque(this).takeUnretainedValue().on_log(message: RustString(ptr: message))
@@ -1009,6 +1219,132 @@ extension __swift_bridge__$Option$MmServiceOutcome {
         } else {
             return __swift_bridge__$Option$MmServiceOutcome(is_some: false, val: __swift_bridge__$MmServiceOutcome())
         }
+    }
+}
+public struct MmReadyOutcome {
+    public var success: Bool
+    public var ready: Bool
+    public var error: MmErrorInfo
+
+    public init(success: Bool,ready: Bool,error: MmErrorInfo) {
+        self.success = success
+        self.ready = ready
+        self.error = error
+    }
+
+    @inline(__always)
+    func intoFfiRepr() -> __swift_bridge__$MmReadyOutcome {
+        { let val = self; return __swift_bridge__$MmReadyOutcome(success: val.success, ready: val.ready, error: val.error.intoFfiRepr()); }()
+    }
+}
+extension __swift_bridge__$MmReadyOutcome {
+    @inline(__always)
+    func intoSwiftRepr() -> MmReadyOutcome {
+        { let val = self; return MmReadyOutcome(success: val.success, ready: val.ready, error: val.error.intoSwiftRepr()); }()
+    }
+}
+extension __swift_bridge__$Option$MmReadyOutcome {
+    @inline(__always)
+    func intoSwiftRepr() -> Optional<MmReadyOutcome> {
+        if self.is_some {
+            return self.val.intoSwiftRepr()
+        } else {
+            return nil
+        }
+    }
+
+    @inline(__always)
+    static func fromSwiftRepr(_ val: Optional<MmReadyOutcome>) -> __swift_bridge__$Option$MmReadyOutcome {
+        if let v = val {
+            return __swift_bridge__$Option$MmReadyOutcome(is_some: true, val: v.intoFfiRepr())
+        } else {
+            return __swift_bridge__$Option$MmReadyOutcome(is_some: false, val: __swift_bridge__$MmReadyOutcome())
+        }
+    }
+}
+public enum MmCoreStatus {
+    case Started
+    case InProgress
+    case Stopped
+}
+extension MmCoreStatus {
+    func intoFfiRepr() -> __swift_bridge__$MmCoreStatus {
+        switch self {
+            case MmCoreStatus.Started:
+                return __swift_bridge__$MmCoreStatus(tag: __swift_bridge__$MmCoreStatus$Started)
+            case MmCoreStatus.InProgress:
+                return __swift_bridge__$MmCoreStatus(tag: __swift_bridge__$MmCoreStatus$InProgress)
+            case MmCoreStatus.Stopped:
+                return __swift_bridge__$MmCoreStatus(tag: __swift_bridge__$MmCoreStatus$Stopped)
+        }
+    }
+}
+extension __swift_bridge__$MmCoreStatus {
+    func intoSwiftRepr() -> MmCoreStatus {
+        switch self.tag {
+            case __swift_bridge__$MmCoreStatus$Started:
+                return MmCoreStatus.Started
+            case __swift_bridge__$MmCoreStatus$InProgress:
+                return MmCoreStatus.InProgress
+            case __swift_bridge__$MmCoreStatus$Stopped:
+                return MmCoreStatus.Stopped
+            default:
+                fatalError("Unreachable")
+        }
+    }
+}
+extension __swift_bridge__$Option$MmCoreStatus {
+    @inline(__always)
+    func intoSwiftRepr() -> Optional<MmCoreStatus> {
+        if self.is_some {
+            return self.val.intoSwiftRepr()
+        } else {
+            return nil
+        }
+    }
+    @inline(__always)
+    static func fromSwiftRepr(_ val: Optional<MmCoreStatus>) -> __swift_bridge__$Option$MmCoreStatus {
+        if let v = val {
+            return __swift_bridge__$Option$MmCoreStatus(is_some: true, val: v.intoFfiRepr())
+        } else {
+            return __swift_bridge__$Option$MmCoreStatus(is_some: false, val: __swift_bridge__$MmCoreStatus())
+        }
+    }
+}
+extension MmCoreStatus: Vectorizable {
+    public static func vecOfSelfNew() -> UnsafeMutableRawPointer {
+        __swift_bridge__$Vec_MmCoreStatus$new()
+    }
+
+    public static func vecOfSelfFree(vecPtr: UnsafeMutableRawPointer) {
+        __swift_bridge__$Vec_MmCoreStatus$drop(vecPtr)
+    }
+
+    public static func vecOfSelfPush(vecPtr: UnsafeMutableRawPointer, value: Self) {
+        __swift_bridge__$Vec_MmCoreStatus$push(vecPtr, value.intoFfiRepr())
+    }
+
+    public static func vecOfSelfPop(vecPtr: UnsafeMutableRawPointer) -> Optional<Self> {
+        let maybeEnum = __swift_bridge__$Vec_MmCoreStatus$pop(vecPtr)
+        return maybeEnum.intoSwiftRepr()
+    }
+
+    public static func vecOfSelfGet(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<Self> {
+        let maybeEnum = __swift_bridge__$Vec_MmCoreStatus$get(vecPtr, index)
+        return maybeEnum.intoSwiftRepr()
+    }
+
+    public static func vecOfSelfGetMut(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<Self> {
+        let maybeEnum = __swift_bridge__$Vec_MmCoreStatus$get_mut(vecPtr, index)
+        return maybeEnum.intoSwiftRepr()
+    }
+
+    public static func vecOfSelfAsPtr(vecPtr: UnsafeMutableRawPointer) -> UnsafePointer<Self> {
+        UnsafePointer<Self>(OpaquePointer(__swift_bridge__$Vec_MmCoreStatus$as_ptr(vecPtr)))
+    }
+
+    public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
+        __swift_bridge__$Vec_MmCoreStatus$len(vecPtr)
     }
 }
 

@@ -154,6 +154,25 @@ mod ffi {
         error: MmErrorInfo,
     }
 
+    // Outcome of a readiness query (isReady / isDDIMounted /
+    // mountDDI): `ready` carries the Bool on success — the one
+    // Bool the EventSink status shape cannot carry (diff list
+    // D-M4-3).
+    #[swift_bridge(swift_repr = "struct")]
+    struct MmReadyOutcome {
+        success: bool,
+        ready: bool,
+        error: MmErrorInfo,
+    }
+
+    // FFI twin of `mm_core::CoreStatus` (Swift
+    // `MinimuxerStatus`).
+    enum MmCoreStatus {
+        Started,
+        InProgress,
+        Stopped,
+    }
+
     extern "Rust" {
         fn mm_version() -> String;
         fn mm_parse_pairing_file(
@@ -215,6 +234,37 @@ mod ffi {
         fn mm_proxy_is_listening() -> bool;
         fn mm_proxy_notify_attached(peer_ip: String);
         fn mm_proxy_notify_detached();
+
+        // mm-core (M4): the MinimuxerImpl lifecycle face —
+        // start/stop/restart, the nine-gate isReady, the facade
+        // parameter set, and the status/heartbeat readouts. The
+        // status bus itself crosses via the EventSink's
+        // on_status (subscribed inside core_globals).
+        async fn mm_core_start(
+            content: String,
+            docs_path: String,
+            preferred: Option<MmPairingProtocol>,
+        ) -> MmOutcome;
+        async fn mm_core_stop() -> MmOutcome;
+        async fn mm_core_restart() -> MmOutcome;
+        async fn mm_core_reinitialize_pairing_data(content: String) -> MmOutcome;
+        fn mm_core_bind_connection_config(config: MmConnectionConfig) -> MmOutcome;
+        async fn mm_core_is_ready(
+            with_network_check: bool,
+            with_ddi_mount_check: bool,
+        ) -> MmReadyOutcome;
+        async fn mm_core_fetch_udid() -> MmStringOutcome;
+        async fn mm_core_is_ddi_mounted() -> MmReadyOutcome;
+        async fn mm_core_mount_ddi(docs_path: String) -> MmReadyOutcome;
+        fn mm_core_set_params(
+            backend: Option<MmGatewayBackend>,
+            remote_pairing_port: Option<u16>,
+            device_probe_timeout: Option<i32>,
+        );
+        fn mm_core_status() -> MmCoreStatus;
+        fn mm_core_set_logging(enabled: bool);
+        fn mm_core_is_pairing_file_loaded() -> bool;
+        fn mm_core_last_beat_successful() -> bool;
     }
 
     extern "Swift" {
@@ -422,7 +472,7 @@ struct NetGlobals {
     manager: std::sync::Arc<mm_net::DeviceConnectionManager>,
     endpoint: std::sync::Arc<mm_net::DeviceEndpoint>,
     stack: std::sync::Arc<mm_net::NetStack>,
-    observer: mm_net::PollingObserver,
+    observer: std::sync::Arc<mm_net::PollingObserver>,
 }
 
 fn net_globals() -> &'static NetGlobals {
@@ -441,15 +491,16 @@ fn net_globals() -> &'static NetGlobals {
             endpoint.clone(),
             scan_source.clone(),
         ));
-        // Until mm-core (M4) wires the status re-probe, network
-        // changes surface as log lines through the event sink so the
-        // path is observable end to end.
-        stack.add_change_handler(Arc::new(|| {
-            Box::pin(async {
-                mm_emit_log("[net] network changed".to_string());
-            })
-        }));
-        let observer = mm_net::PollingObserver::new(stack.clone(), scan_source.clone());
+        // The network-change → status re-probe handler is
+        // registered by MinimuxerCore::new (M4) when core_globals
+        // initializes; the M2 log-line placeholder that stood in
+        // for it is retired. mm_net_observer_start initializes
+        // the core globals first so the path is live whenever
+        // the observer runs.
+        let observer = Arc::new(mm_net::PollingObserver::new(
+            stack.clone(),
+            scan_source.clone(),
+        ));
         NetGlobals {
             scan_source,
             manager,
@@ -674,6 +725,9 @@ async fn mm_net_refresh() -> bool {
 }
 
 fn mm_net_observer_start() -> bool {
+    // Wire the core (and with it the status re-probe handler)
+    // before the observer can fire any network change.
+    let _ = core_globals();
     net_globals().observer.start(global_runtime().handle())
 }
 
@@ -926,6 +980,248 @@ fn mm_proxy_notify_attached(peer_ip: String) {
 
 fn mm_proxy_notify_detached() {
     gateway_globals().proxy.notify_device_detached();
+}
+
+// ---------------------------------------------------------------------------
+// Core globals (M4): the one MinimuxerCore for the App's
+// lifetime, composed over the net/gateway globals. Building it
+// registers the network-change → isReady re-probe handler on
+// the stack (inside MinimuxerCore::new); the status bus is
+// subscribed here and forwarded to the EventSink's on_status.
+// ---------------------------------------------------------------------------
+
+/// `CoreGatewayProvider` over the hub: the core always reads a
+/// materialized gateway (Swift's DeviceProvider starts empty
+/// but MinimuxerImpl only ever runs against a live instance),
+/// while the proxy keeps the hub's None-able view.
+struct CoreProviderAdapter(std::sync::Arc<GatewayHub>);
+
+impl mm_gateway::GatewayProvider for CoreProviderAdapter {
+    fn current_gateway(
+        &self,
+    ) -> Option<std::sync::Arc<dyn mm_gateway::DeviceGateway>> {
+        Some(self.0.ensure_gateway())
+    }
+}
+
+impl mm_core::CoreGatewayProvider for CoreProviderAdapter {
+    fn backend(&self) -> mm_gateway::GatewayBackend {
+        self.0.backend()
+    }
+
+    fn set_backend(
+        &self,
+        backend: mm_gateway::GatewayBackend,
+    ) -> std::sync::Arc<dyn mm_gateway::DeviceGateway> {
+        self.0.set_backend(backend)
+    }
+}
+
+struct CoreGlobals {
+    core: std::sync::Arc<mm_core::MinimuxerCore>,
+}
+
+fn core_globals() -> &'static CoreGlobals {
+    static CORE: OnceLock<CoreGlobals> = OnceLock::new();
+    CORE.get_or_init(|| {
+        use std::sync::Arc;
+        let net = net_globals();
+        let gw = gateway_globals();
+        let provider: Arc<dyn mm_core::CoreGatewayProvider> =
+            Arc::new(CoreProviderAdapter(gateway_hub().clone()));
+        let core = mm_core::MinimuxerCore::new(
+            provider,
+            net.stack.clone(),
+            net.observer.clone(),
+            gw.proxy.clone(),
+            Arc::new(mm_core::SystemOsVersion::new()),
+        );
+        // Status bus → EventSink. The sink's on_status shape
+        // (success + error triple) cannot carry `.success(false)`
+        // — the DDI-not-mounted result of the withDDIMountCheck
+        // probe, which the App does not use; it collapses to a
+        // plain success emission (diff list D-M4-3). The direct
+        // mm_core_is_ready query carries the Bool faithfully.
+        core.subscribe_status(Arc::new(|result| match result {
+            Ok(_) => {
+                mm_emit_status(true, String::new(), String::new(), String::new())
+            }
+            Err(e) => {
+                let info = e.to_info();
+                mm_emit_status(false, info.domain, info.code, info.reason);
+            }
+        }));
+        CoreGlobals { core }
+    })
+}
+
+fn ready_outcome_from(
+    result: Result<bool, mm_common::MmErrorInfo>,
+) -> ffi::MmReadyOutcome {
+    match result {
+        Ok(ready) => ffi::MmReadyOutcome {
+            success: true,
+            ready,
+            error: empty_error(),
+        },
+        Err(e) => ffi::MmReadyOutcome {
+            success: false,
+            ready: false,
+            error: e.into(),
+        },
+    }
+}
+
+// Core operations run on the global runtime via spawn_gateway
+// (the core spawns its heartbeat/observer tasks there); the
+// core's MinimuxerError is flattened to its info shape at the
+// boundary, like every other subsystem.
+
+async fn mm_core_start(
+    content: String,
+    docs_path: String,
+    preferred: Option<ffi::MmPairingProtocol>,
+) -> ffi::MmOutcome {
+    let core = core_globals().core.clone();
+    let preferred = preferred.map(|p| p.to_common());
+    outcome_from(
+        spawn_gateway(async move {
+            core.start(&content, &docs_path, preferred)
+                .await
+                .map_err(|e| e.to_info())
+        })
+        .await,
+    )
+}
+
+async fn mm_core_stop() -> ffi::MmOutcome {
+    let core = core_globals().core.clone();
+    outcome_from(
+        spawn_gateway(async move { core.stop().await.map_err(|e| e.to_info()) })
+            .await,
+    )
+}
+
+async fn mm_core_restart() -> ffi::MmOutcome {
+    let core = core_globals().core.clone();
+    outcome_from(
+        spawn_gateway(async move { core.restart().await.map_err(|e| e.to_info()) })
+            .await,
+    )
+}
+
+async fn mm_core_reinitialize_pairing_data(content: String) -> ffi::MmOutcome {
+    let core = core_globals().core.clone();
+    outcome_from(
+        spawn_gateway(async move {
+            core.reinitialize_pairing_data(&content)
+                .await
+                .map_err(|e| e.to_info())
+        })
+        .await,
+    )
+}
+
+fn mm_core_bind_connection_config(
+    config: ffi::MmConnectionConfig,
+) -> ffi::MmOutcome {
+    // The Swift-side config object is not Send, so this entry
+    // stays synchronous (like mm_net_bind_connection_config):
+    // the binding itself is installed synchronously on the
+    // shared manager — the same instance the core reads — and
+    // the endpoint refresh that completes
+    // MinimuxerCore::bind_connection_config is dispatched to
+    // the global runtime.
+    let holder: SharedConfig = std::sync::Arc::new(Mutex::new(ConfigHolder(config)));
+    let binding = build_binding(holder);
+    let _ = core_globals();
+    let net = net_globals();
+    net.manager.bind_connection_config(binding);
+    let stack = net.stack.clone();
+    global_runtime().spawn(async move {
+        stack.refresh_endpoint().await;
+    });
+    ffi::MmOutcome {
+        success: true,
+        error: empty_error(),
+    }
+}
+
+async fn mm_core_is_ready(
+    with_network_check: bool,
+    with_ddi_mount_check: bool,
+) -> ffi::MmReadyOutcome {
+    let core = core_globals().core.clone();
+    ready_outcome_from(
+        spawn_gateway(async move {
+            core.is_ready(with_network_check, with_ddi_mount_check)
+                .await
+                .map_err(|e| e.to_info())
+        })
+        .await,
+    )
+}
+
+async fn mm_core_fetch_udid() -> ffi::MmStringOutcome {
+    let core = core_globals().core.clone();
+    string_outcome_from(
+        spawn_gateway(async move {
+            core.fetch_udid().await.map_err(|e| e.to_info())
+        })
+        .await,
+    )
+}
+
+async fn mm_core_is_ddi_mounted() -> ffi::MmReadyOutcome {
+    let core = core_globals().core.clone();
+    ready_outcome_from(
+        spawn_gateway(async move {
+            core.is_ddi_mounted().await.map_err(|e| e.to_info())
+        })
+        .await,
+    )
+}
+
+async fn mm_core_mount_ddi(docs_path: String) -> ffi::MmReadyOutcome {
+    let core = core_globals().core.clone();
+    ready_outcome_from(
+        spawn_gateway(async move {
+            core.mount_ddi(&docs_path).await.map_err(|e| e.to_info())
+        })
+        .await,
+    )
+}
+
+fn mm_core_set_params(
+    backend: Option<ffi::MmGatewayBackend>,
+    remote_pairing_port: Option<u16>,
+    device_probe_timeout: Option<i32>,
+) {
+    core_globals().core.set_params(mm_core::MinimuxerParams {
+        backend: backend.map(|b| b.to_gateway()),
+        remote_pairing_port,
+        device_probe_timeout,
+    });
+}
+
+fn mm_core_status() -> ffi::MmCoreStatus {
+    match core_globals().core.status() {
+        mm_core::CoreStatus::Started => ffi::MmCoreStatus::Started,
+        mm_core::CoreStatus::InProgress => ffi::MmCoreStatus::InProgress,
+        mm_core::CoreStatus::Stopped => ffi::MmCoreStatus::Stopped,
+    }
+}
+
+fn mm_core_set_logging(enabled: bool) {
+    core_globals().core.set_logging(enabled);
+}
+
+fn mm_core_is_pairing_file_loaded() -> bool {
+    core_globals().core.is_pairing_file_loaded()
+}
+
+fn mm_core_last_beat_successful() -> bool {
+    core_globals().core.heartbeat().last_beat_successful()
 }
 
 // ---------------------------------------------------------------------------
@@ -1187,5 +1483,60 @@ mod tests {
         assert!(!outcome.success);
         assert_eq!(outcome.error.domain, "MinimuxerError");
         assert_eq!(outcome.error.code, "pairingNotLoaded");
+    }
+
+    // -- mm-core (M4) -----------------------------------------------------
+    // The global core can never reach Started in host tests (no
+    // Swift-side connection config can be bound), which pins the
+    // early gates and the not-configured start path.
+
+    #[test]
+    fn core_is_ready_fails_at_gate1_without_pairing() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let outcome = rt.block_on(mm_core_is_ready(true, false));
+        assert!(!outcome.success);
+        assert!(!outcome.ready);
+        assert_eq!(outcome.error.domain, "MinimuxerError");
+        assert_eq!(outcome.error.code, "pairingNotLoaded");
+    }
+
+    #[test]
+    fn core_start_without_mode_is_not_configured() {
+        // The mode check runs before the gateway is touched, so
+        // the global gateway stays unstarted (the invariant the
+        // gateway tests above rely on).
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let outcome = rt.block_on(mm_core_start(
+            LOCKDOWN_XML.to_string(),
+            "/tmp/docs".to_string(),
+            None,
+        ));
+        assert!(!outcome.success);
+        assert_eq!(outcome.error.domain, "MinimuxerError");
+        assert_eq!(outcome.error.code, "connectionModeNotConfigured");
+        assert!(matches!(mm_core_status(), ffi::MmCoreStatus::Stopped));
+    }
+
+    #[test]
+    fn core_defaults_and_fetch_udid_mapping() {
+        assert!(!mm_core_is_pairing_file_loaded());
+        assert!(!mm_core_last_beat_successful());
+        // fetchUDID through the core: the gateway's
+        // NotInitialized lands in the fetchUDID catch-all.
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let outcome = rt.block_on(mm_core_fetch_udid());
+        assert!(!outcome.success);
+        assert_eq!(outcome.error.domain, "MinimuxerError");
+        assert_eq!(outcome.error.code, "fetchUDID");
+    }
+
+    #[test]
+    fn core_set_params_accepts_partial_updates() {
+        // Timeout-only update: no backend switch, no gateway
+        // rebuild; the value lands on the shared manager.
+        mm_core_set_params(None, None, Some(4321));
+        assert_eq!(net_globals().manager.device_probe_timeout(), 4321);
+        mm_core_set_params(None, None, Some(250));
+        assert_eq!(net_globals().manager.device_probe_timeout(), 250);
     }
 }

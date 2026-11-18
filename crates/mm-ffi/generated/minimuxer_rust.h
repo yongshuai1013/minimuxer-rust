@@ -56,6 +56,21 @@ typedef struct __swift_bridge__$MmStringOutcome { bool success; void* value; str
 typedef struct __swift_bridge__$Option$MmStringOutcome { bool is_some; __swift_bridge__$MmStringOutcome val; } __swift_bridge__$Option$MmStringOutcome;
 typedef struct __swift_bridge__$MmServiceOutcome { bool success; void* service_name; uint16_t port; bool enable_ssl; struct __swift_bridge__$MmErrorInfo error; } __swift_bridge__$MmServiceOutcome;
 typedef struct __swift_bridge__$Option$MmServiceOutcome { bool is_some; __swift_bridge__$MmServiceOutcome val; } __swift_bridge__$Option$MmServiceOutcome;
+typedef struct __swift_bridge__$MmReadyOutcome { bool success; bool ready; struct __swift_bridge__$MmErrorInfo error; } __swift_bridge__$MmReadyOutcome;
+typedef struct __swift_bridge__$Option$MmReadyOutcome { bool is_some; __swift_bridge__$MmReadyOutcome val; } __swift_bridge__$Option$MmReadyOutcome;
+typedef enum __swift_bridge__$MmCoreStatusTag { __swift_bridge__$MmCoreStatus$Started, __swift_bridge__$MmCoreStatus$InProgress, __swift_bridge__$MmCoreStatus$Stopped, } __swift_bridge__$MmCoreStatusTag;
+typedef struct __swift_bridge__$MmCoreStatus { __swift_bridge__$MmCoreStatusTag tag; } __swift_bridge__$MmCoreStatus;
+typedef struct __swift_bridge__$Option$MmCoreStatus { bool is_some; __swift_bridge__$MmCoreStatus val; } __swift_bridge__$Option$MmCoreStatus;
+
+void* __swift_bridge__$Vec_MmCoreStatus$new(void);
+void __swift_bridge__$Vec_MmCoreStatus$drop(void* vec_ptr);
+void __swift_bridge__$Vec_MmCoreStatus$push(void* vec_ptr, __swift_bridge__$MmCoreStatus item);
+__swift_bridge__$Option$MmCoreStatus __swift_bridge__$Vec_MmCoreStatus$pop(void* vec_ptr);
+__swift_bridge__$Option$MmCoreStatus __swift_bridge__$Vec_MmCoreStatus$get(void* vec_ptr, uintptr_t index);
+__swift_bridge__$Option$MmCoreStatus __swift_bridge__$Vec_MmCoreStatus$get_mut(void* vec_ptr, uintptr_t index);
+uintptr_t __swift_bridge__$Vec_MmCoreStatus$len(void* vec_ptr);
+void* __swift_bridge__$Vec_MmCoreStatus$as_ptr(void* vec_ptr);
+
 void* __swift_bridge__$mm_version(void);
 struct __swift_bridge__$MmPairingOutcome __swift_bridge__$mm_parse_pairing_file(void* content, struct __swift_bridge__$Option$MmPairingProtocol preferred);
 void* __swift_bridge__$mm_describe_error(struct __swift_bridge__$MmErrorInfo info);
@@ -97,5 +112,19 @@ void __swift_bridge__$mm_proxy_stop(void* callback_wrapper, void __swift_bridge_
 bool __swift_bridge__$mm_proxy_is_listening(void);
 void __swift_bridge__$mm_proxy_notify_attached(void* peer_ip);
 void __swift_bridge__$mm_proxy_notify_detached(void);
+void __swift_bridge__$mm_core_start(void* callback_wrapper, void __swift_bridge__$mm_core_start$async(void* callback_wrapper, struct __swift_bridge__$MmOutcome ret), void* content, void* docs_path, struct __swift_bridge__$Option$MmPairingProtocol preferred);
+void __swift_bridge__$mm_core_stop(void* callback_wrapper, void __swift_bridge__$mm_core_stop$async(void* callback_wrapper, struct __swift_bridge__$MmOutcome ret));
+void __swift_bridge__$mm_core_restart(void* callback_wrapper, void __swift_bridge__$mm_core_restart$async(void* callback_wrapper, struct __swift_bridge__$MmOutcome ret));
+void __swift_bridge__$mm_core_reinitialize_pairing_data(void* callback_wrapper, void __swift_bridge__$mm_core_reinitialize_pairing_data$async(void* callback_wrapper, struct __swift_bridge__$MmOutcome ret), void* content);
+struct __swift_bridge__$MmOutcome __swift_bridge__$mm_core_bind_connection_config(void* config);
+void __swift_bridge__$mm_core_is_ready(void* callback_wrapper, void __swift_bridge__$mm_core_is_ready$async(void* callback_wrapper, struct __swift_bridge__$MmReadyOutcome ret), bool with_network_check, bool with_ddi_mount_check);
+void __swift_bridge__$mm_core_fetch_udid(void* callback_wrapper, void __swift_bridge__$mm_core_fetch_udid$async(void* callback_wrapper, struct __swift_bridge__$MmStringOutcome ret));
+void __swift_bridge__$mm_core_is_ddi_mounted(void* callback_wrapper, void __swift_bridge__$mm_core_is_ddi_mounted$async(void* callback_wrapper, struct __swift_bridge__$MmReadyOutcome ret));
+void __swift_bridge__$mm_core_mount_ddi(void* callback_wrapper, void __swift_bridge__$mm_core_mount_ddi$async(void* callback_wrapper, struct __swift_bridge__$MmReadyOutcome ret), void* docs_path);
+void __swift_bridge__$mm_core_set_params(struct __swift_bridge__$Option$MmGatewayBackend backend, struct __private__OptionU16 remote_pairing_port, struct __private__OptionI32 device_probe_timeout);
+struct __swift_bridge__$MmCoreStatus __swift_bridge__$mm_core_status(void);
+void __swift_bridge__$mm_core_set_logging(bool enabled);
+bool __swift_bridge__$mm_core_is_pairing_file_loaded(void);
+bool __swift_bridge__$mm_core_last_beat_successful(void);
 
 
