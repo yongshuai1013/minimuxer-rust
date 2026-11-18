@@ -85,7 +85,7 @@ jobs:
           cp "$GITHUB_WORKSPACE/Common/Bindings/ShellSinks.swift" .
           HDRS="$GITHUB_WORKSPACE/crates/mm-ffi/generated"
           cp "$HDRS/minimuxer_rust.h" "$HDRS/SwiftBridgeCore.h" inc/
-          printf 'module minimuxer_rust {\n  header "minimuxer_rust.h"\n  header "SwiftBridgeCore.h"\n  export *\n}\n' > inc/module.modulemap
+          printf 'module minimuxer_rust {\n  header "SwiftBridgeCore.h"\n  header "minimuxer_rust.h"\n  export *\n}\n' > inc/module.modulemap
           for MODE in wmo plain onone; do
             case $MODE in
               wmo) OPTS="-O -whole-module-optimization";;
@@ -93,7 +93,7 @@ jobs:
               onone) OPTS="-Onone";;
             esac
             mkdir -p out-$MODE && cd out-$MODE
-            xcrun swiftc $OPTS -emit-object -module-name MinimuxerRustBindings -I ../inc ../minimuxer_rust.swift ../SwiftBridgeCore.swift ../ShellSinks.swift 2>&1 | head -8 || true
+            xcrun swiftc $OPTS -emit-object -module-name MinimuxerRustBindings -I ../inc ../minimuxer_rust.swift ../SwiftBridgeCore.swift ../ShellSinks.swift 2>&1 | head -30 || true
             ls -la *.o || true
             echo "== $MODE: MmEventSink symbols across objects =="
             nm *.o 2>/dev/null | grep -i "MmEventSink" | head -10 || true
