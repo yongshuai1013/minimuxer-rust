@@ -108,7 +108,7 @@ jobs:
           mkdir -p build/include/minimuxer_rust
           cp crates/mm-ffi/generated/minimuxer_rust.h build/include/minimuxer_rust/
           cp crates/mm-ffi/generated/SwiftBridgeCore.h build/include/minimuxer_rust/
-          printf 'module minimuxer_rust {\n\theader "minimuxer_rust.h"\n\theader "SwiftBridgeCore.h"\n\texport *\n}\n' \
+          printf 'module minimuxer_rust {\n\theader "SwiftBridgeCore.h"\n\theader "minimuxer_rust.h"\n\texport *\n}\n' \
             > build/include/minimuxer_rust/module.modulemap
           lipo -create \
             -output build/libminimuxer_rust-sim.a \
@@ -152,26 +152,3 @@ jobs:
             build/MinimuxerRust.xcframework.zip \
             build/MinimuxerRust.xcframework.zip.sha256 --clobber
 
-  diag-import:
-    name: Diag import test (temporary)
-    runs-on: xcode-27
-    steps:
-      - uses: maxim-lobanov/setup-xcode@v1.6.0
-        with:
-          xcode-version: '27.2'
-      - name: Fetch 0.1.1 xcframework headers
-        run: |
-          curl -sL -o /tmp/mm.zip https://github.com/yongshuai1013/minimuxer-rust/releases/download/rust-v0.1.1/MinimuxerRust.xcframework.zip
-          cd /tmp && ditto -x -k mm.zip mmx
-          ls mmx/MinimuxerRust.xcframework/ios-arm64/Headers/minimuxer_rust/
-      - name: Typecheck isolated references
-        run: |
-          SRC=/tmp/mmx/MinimuxerRust.xcframework/ios-arm64/Headers/minimuxer_rust
-          mkdir -p /tmp/swapped/minimuxer_rust
-          cp "$SRC/minimuxer_rust.h" "$SRC/SwiftBridgeCore.h" /tmp/swapped/minimuxer_rust/
-          printf 'module minimuxer_rust {\n\theader "SwiftBridgeCore.h"\n\theader "minimuxer_rust.h"\n\texport *\n}\n' > /tmp/swapped/minimuxer_rust/module.modulemap
-          printf 'import minimuxer_rust\nlet c = __swift_bridge__$mm_core_set_params\nlet a = __swift_bridge__$mm_core_status\n' > /tmp/t2.swift
-          echo "=== set_params via swapped modulemap:"
-          xcrun swiftc -typecheck -I /tmp/swapped /tmp/t2.swift && echo SWAPPED_OK || echo SWAPPED_FAIL
-          echo "=== control via original modulemap:"
-          xcrun swiftc -typecheck -I /tmp/mmx/MinimuxerRust.xcframework/ios-arm64/Headers /tmp/t2.swift && echo ORIG_OK || echo ORIG_FAIL
