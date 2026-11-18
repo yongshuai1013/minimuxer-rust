@@ -8,6 +8,11 @@ description = "Minimuxer Rust rewrite: swift-bridge FFI boundary (global tokio r
 name = "minimuxer_rust"
 crate-type = ["staticlib", "rlib"]
 
+[features]
+# The libimobiledevice backend (links the C library at runtime;
+# enabled for the shipped xcframework, off for host tests).
+limd = ["mm-gateway/limd"]
+
 [dependencies]
 mm-common = { path = "../mm-common" }
 mm-net = { path = "../mm-net" }

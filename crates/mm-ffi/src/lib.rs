@@ -16,9 +16,23 @@
 //! `mm_net_complete_service_port` completion call (10 s timeout,
 //! treated as "port unchanged", matching Swift's always-answering
 //! resolver contract as closely as the boundary allows).
+//!
+//! M3 adds the mm-gateway basic chain and the mm-core usbmuxd
+//! proxy: a global `GatewayHub` owns the current gateway
+//! (backend selection with Swift's switch semantics), the
+//! manager's port source now resolves against the real gateway
+//! (the M2 `TablePortSource` stand-in and its
+//! `mm_net_set_pairing_protocol` driver are retired), endpoint
+//! updates flow into the gateway through the hub, and the proxy
+//! is wired to the hub and to the NetStack's attach feed.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
+
+mod gateway_hub;
+
+use gateway_hub::GatewayHub;
+use mm_gateway::GatewayProvider as _;
 
 /// The single multi-threaded tokio runtime every bridge call spawns on
 /// (design §3.3). Held for the App's lifetime.
@@ -105,6 +119,41 @@ mod ffi {
         error: MmErrorInfo,
     }
 
+    // FFI twin of `mm_gateway::GatewayBackend` (Swift
+    // `GatewayBackend`): the App-visible backend choice.
+    enum MmGatewayBackend {
+        Idevice,
+        Libimobiledevice,
+    }
+
+    // Outcome of a gateway operation with no payload.
+    #[swift_bridge(swift_repr = "struct")]
+    struct MmOutcome {
+        success: bool,
+        error: MmErrorInfo,
+    }
+
+    // Outcome of a gateway operation returning a string
+    // (fetchUDID / getLockdownValue).
+    #[swift_bridge(swift_repr = "struct")]
+    struct MmStringOutcome {
+        success: bool,
+        value: String,
+        error: MmErrorInfo,
+    }
+
+    // Outcome of opening a service channel: the service's
+    // coordinates on success (the connection itself stays on
+    // the Rust side, held by the gateway).
+    #[swift_bridge(swift_repr = "struct")]
+    struct MmServiceOutcome {
+        success: bool,
+        service_name: String,
+        port: u16,
+        enable_ssl: bool,
+        error: MmErrorInfo,
+    }
+
     extern "Rust" {
         fn mm_version() -> String;
         fn mm_parse_pairing_file(
@@ -130,12 +179,42 @@ mod ffi {
         fn mm_net_bind_connection_config(config: MmConnectionConfig);
         fn mm_net_clear_connection_config();
         fn mm_net_set_probe_timeout(timeout_ms: i32);
-        fn mm_net_set_pairing_protocol(protocol: MmPairingProtocol);
         fn mm_net_complete_service_port(
             request_id: u64,
             protocol: MmPairingProtocol,
             port: u16,
         ) -> bool;
+
+        // mm-gateway (M3): the device-gateway basic chain —
+        // backend selection, start/stop, endpoint feed, port
+        // surface, UDID / lockdown values, session, services.
+        fn mm_gateway_backend() -> MmGatewayBackend;
+        fn mm_gateway_set_backend(backend: MmGatewayBackend);
+        fn mm_gateway_requires_usbmuxd() -> bool;
+        async fn mm_gateway_start(
+            content: String,
+            preferred: Option<MmPairingProtocol>,
+        ) -> MmOutcome;
+        async fn mm_gateway_stop() -> MmOutcome;
+        fn mm_gateway_set_endpoint_ip(ip: Option<String>);
+        fn mm_gateway_pairing_protocol() -> MmPairingProtocol;
+        fn mm_gateway_service_port(protocol: MmPairingProtocol) -> u16;
+        fn mm_gateway_set_port(port: u16, protocol: MmPairingProtocol);
+        async fn mm_gateway_fetch_udid() -> MmStringOutcome;
+        async fn mm_gateway_get_lockdown_value(key: String) -> MmStringOutcome;
+        async fn mm_gateway_start_session() -> MmOutcome;
+        async fn mm_gateway_stop_session() -> MmOutcome;
+        async fn mm_gateway_open_service(service_name: String) -> MmServiceOutcome;
+        fn mm_gateway_set_logging(enabled: bool);
+
+        // mm-core usbmuxd proxy (M3): the in-App usbmuxd the
+        // libimobiledevice backend is retargeted to.
+        fn mm_usbmuxd_retarget();
+        async fn mm_proxy_start() -> MmOutcome;
+        async fn mm_proxy_stop();
+        fn mm_proxy_is_listening() -> bool;
+        fn mm_proxy_notify_attached(peer_ip: String);
+        fn mm_proxy_notify_detached();
     }
 
     extern "Swift" {
@@ -319,15 +398,26 @@ async fn mm_async_ping() -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Gateway hub global: the one current gateway for the App's
+// lifetime. The connection manager's port source, the endpoint's
+// IP sink, and the usbmuxd proxy's gateway provider are all this
+// hub (see gateway_hub.rs).
+// ---------------------------------------------------------------------------
+
+fn gateway_hub() -> &'static std::sync::Arc<GatewayHub> {
+    static HUB: OnceLock<std::sync::Arc<GatewayHub>> = OnceLock::new();
+    HUB.get_or_init(|| std::sync::Arc::new(GatewayHub::new()))
+}
+
+// ---------------------------------------------------------------------------
 // mm-net globals (M2): one NetStack for the App's lifetime — the
 // connection manager reads the live scan source, the endpoint is the
 // single source of truth, and the polling observer drives refreshes.
-// The port table stands in for the gateway's port surface until
-// mm-gateway lands (M3).
+// Since M3 the manager's port source is the real gateway (via the
+// hub), retiring the M2 TablePortSource stand-in from the wiring.
 // ---------------------------------------------------------------------------
 
 struct NetGlobals {
-    port_source: std::sync::Arc<mm_net::TablePortSource>,
     scan_source: std::sync::Arc<mm_net::LiveScanSource>,
     manager: std::sync::Arc<mm_net::DeviceConnectionManager>,
     endpoint: std::sync::Arc<mm_net::DeviceEndpoint>,
@@ -339,10 +429,10 @@ fn net_globals() -> &'static NetGlobals {
     static NET: OnceLock<NetGlobals> = OnceLock::new();
     NET.get_or_init(|| {
         use std::sync::Arc;
-        let port_source = Arc::new(mm_net::TablePortSource::default());
+        let port_source: Arc<dyn mm_net::ServicePortSource> = gateway_hub().clone();
         let scan_source = Arc::new(mm_net::LiveScanSource);
         let manager = Arc::new(mm_net::DeviceConnectionManager::new(
-            port_source.clone(),
+            port_source,
             scan_source.clone(),
         ));
         let endpoint = Arc::new(mm_net::DeviceEndpoint::new());
@@ -361,13 +451,38 @@ fn net_globals() -> &'static NetGlobals {
         }));
         let observer = mm_net::PollingObserver::new(stack.clone(), scan_source.clone());
         NetGlobals {
-            port_source,
             scan_source,
             manager,
             endpoint,
             stack,
             observer,
         }
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Gateway globals (M3): the usbmuxd proxy plus the one-time wiring
+// between the network layer and the gateway layer — endpoint
+// updates flow into the current gateway (hub as EndpointIpSink),
+// attach/detach events flow into the proxy (as AttachListener).
+// ---------------------------------------------------------------------------
+
+struct GatewayGlobals {
+    proxy: std::sync::Arc<mm_core::usbmuxd_proxy::UsbmuxdProxyServer>,
+}
+
+fn gateway_globals() -> &'static GatewayGlobals {
+    static GW: OnceLock<GatewayGlobals> = OnceLock::new();
+    GW.get_or_init(|| {
+        use std::sync::Arc;
+        let hub = gateway_hub().clone();
+        let provider: Arc<dyn mm_gateway::GatewayProvider> = hub.clone();
+        let proxy = Arc::new(mm_core::usbmuxd_proxy::UsbmuxdProxyServer::new(provider));
+        let sink: Arc<dyn mm_net::EndpointIpSink> = hub.clone();
+        net_globals().endpoint.attach_sink(sink);
+        let listener: Arc<dyn mm_net::AttachListener> = proxy.clone();
+        net_globals().stack.add_attach_listener(listener);
+        GatewayGlobals { proxy }
     })
 }
 
@@ -581,14 +696,6 @@ fn mm_net_set_probe_timeout(timeout_ms: i32) {
     net_globals().manager.set_device_probe_timeout(timeout_ms);
 }
 
-fn mm_net_set_pairing_protocol(protocol: ffi::MmPairingProtocol) {
-    // Drives the stand-in port table; the real source of this value
-    // is the gateway's pairingFileType (M3).
-    net_globals()
-        .port_source
-        .set_pairing_file_type(protocol.to_common());
-}
-
 fn mm_net_complete_service_port(
     request_id: u64,
     protocol: ffi::MmPairingProtocol,
@@ -601,6 +708,224 @@ fn mm_net_complete_service_port(
             .is_ok(),
         None => false,
     }
+}
+
+// ---------------------------------------------------------------------------
+// mm-gateway bridge entry points (M3). Async operations run on
+// the global runtime: the gateway's I/O needs the tokio reactor,
+// while bridge async functions are driven by the caller's
+// executor — the same pattern as mm_async_ping, generalized.
+// ---------------------------------------------------------------------------
+
+impl ffi::MmGatewayBackend {
+    fn to_gateway(self) -> mm_gateway::GatewayBackend {
+        match self {
+            ffi::MmGatewayBackend::Idevice => mm_gateway::GatewayBackend::Idevice,
+            ffi::MmGatewayBackend::Libimobiledevice => {
+                mm_gateway::GatewayBackend::Libimobiledevice
+            }
+        }
+    }
+
+    fn from_gateway(backend: mm_gateway::GatewayBackend) -> Self {
+        match backend {
+            mm_gateway::GatewayBackend::Idevice => ffi::MmGatewayBackend::Idevice,
+            mm_gateway::GatewayBackend::Libimobiledevice => {
+                ffi::MmGatewayBackend::Libimobiledevice
+            }
+        }
+    }
+}
+
+fn empty_error() -> ffi::MmErrorInfo {
+    mm_common::MmErrorInfo::new("", "", "").into()
+}
+
+fn outcome_from(result: Result<(), mm_common::MmErrorInfo>) -> ffi::MmOutcome {
+    match result {
+        Ok(()) => ffi::MmOutcome {
+            success: true,
+            error: empty_error(),
+        },
+        Err(e) => ffi::MmOutcome {
+            success: false,
+            error: e.into(),
+        },
+    }
+}
+
+fn string_outcome_from(
+    result: Result<String, mm_common::MmErrorInfo>,
+) -> ffi::MmStringOutcome {
+    match result {
+        Ok(value) => ffi::MmStringOutcome {
+            success: true,
+            value,
+            error: empty_error(),
+        },
+        Err(e) => ffi::MmStringOutcome {
+            success: false,
+            value: String::new(),
+            error: e.into(),
+        },
+    }
+}
+
+/// Spawn a gateway future on the global runtime and await its
+/// result; a join failure becomes an internal error info.
+async fn spawn_gateway<T, F>(fut: F) -> Result<T, mm_common::MmErrorInfo>
+where
+    F: std::future::Future<Output = Result<T, mm_common::MmErrorInfo>> + Send + 'static,
+    T: Send + 'static,
+{
+    match global_runtime().spawn(fut).await {
+        Ok(result) => result,
+        Err(e) => Err(mm_common::MmErrorInfo::new(
+            "MinimuxerInternalError",
+            "unknown",
+            &format!("gateway task failed: {e}"),
+        )),
+    }
+}
+
+fn mm_gateway_backend() -> ffi::MmGatewayBackend {
+    ffi::MmGatewayBackend::from_gateway(gateway_hub().backend())
+}
+
+fn mm_gateway_set_backend(backend: ffi::MmGatewayBackend) {
+    gateway_hub().set_backend(backend.to_gateway());
+}
+
+fn mm_gateway_requires_usbmuxd() -> bool {
+    gateway_hub().ensure_gateway().requires_usbmuxd()
+}
+
+async fn mm_gateway_start(
+    content: String,
+    preferred: Option<ffi::MmPairingProtocol>,
+) -> ffi::MmOutcome {
+    // Ensure the endpoint/attach wiring exists before the
+    // gateway can be started.
+    let _ = gateway_globals();
+    let gw = gateway_hub().ensure_gateway();
+    let preferred = preferred.map(|p| p.to_common());
+    outcome_from(
+        spawn_gateway(async move { gw.start(&content, preferred).await }).await,
+    )
+}
+
+async fn mm_gateway_stop() -> ffi::MmOutcome {
+    let gw = gateway_hub().ensure_gateway();
+    outcome_from(spawn_gateway(async move { gw.stop().await }).await)
+}
+
+fn mm_gateway_set_endpoint_ip(ip: Option<String>) {
+    // The same EndpointIpSink path the network layer's pushes
+    // take.
+    use mm_net::EndpointIpSink;
+    gateway_hub().set_device_endpoint_ip(ip.as_deref());
+}
+
+fn mm_gateway_pairing_protocol() -> ffi::MmPairingProtocol {
+    use mm_net::ServicePortSource;
+    ffi::MmPairingProtocol::from_common(gateway_hub().pairing_file_type())
+}
+
+fn mm_gateway_service_port(protocol: ffi::MmPairingProtocol) -> u16 {
+    gateway_hub()
+        .ensure_gateway()
+        .get_port(protocol.to_common())
+}
+
+fn mm_gateway_set_port(port: u16, protocol: ffi::MmPairingProtocol) {
+    use mm_net::ServicePortSource;
+    gateway_hub().set_port(port, protocol.to_common());
+}
+
+async fn mm_gateway_fetch_udid() -> ffi::MmStringOutcome {
+    let gw = gateway_hub().ensure_gateway();
+    string_outcome_from(spawn_gateway(async move { gw.fetch_udid().await }).await)
+}
+
+async fn mm_gateway_get_lockdown_value(key: String) -> ffi::MmStringOutcome {
+    let gw = gateway_hub().ensure_gateway();
+    string_outcome_from(
+        spawn_gateway(async move { gw.get_lockdown_value(&key).await }).await,
+    )
+}
+
+async fn mm_gateway_start_session() -> ffi::MmOutcome {
+    let gw = gateway_hub().ensure_gateway();
+    outcome_from(spawn_gateway(async move { gw.start_session().await }).await)
+}
+
+async fn mm_gateway_stop_session() -> ffi::MmOutcome {
+    let gw = gateway_hub().ensure_gateway();
+    outcome_from(spawn_gateway(async move { gw.stop_session().await }).await)
+}
+
+async fn mm_gateway_open_service(service_name: String) -> ffi::MmServiceOutcome {
+    let gw = gateway_hub().ensure_gateway();
+    match spawn_gateway(async move { gw.open_service(&service_name).await }).await {
+        Ok(opened) => ffi::MmServiceOutcome {
+            success: true,
+            service_name: opened.service_name,
+            port: opened.port,
+            enable_ssl: opened.enable_ssl,
+            error: empty_error(),
+        },
+        Err(e) => ffi::MmServiceOutcome {
+            success: false,
+            service_name: String::new(),
+            port: 0,
+            enable_ssl: false,
+            error: e.into(),
+        },
+    }
+}
+
+fn mm_gateway_set_logging(enabled: bool) {
+    if let Some(gw) = gateway_hub().current_gateway() {
+        gw.set_logging(enabled);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// mm-core usbmuxd proxy bridge entry points (M3). The retarget +
+// proxy start composition is MinimuxerImpl's start path; it is
+// exposed in pieces here and composed by the shell (M4), exactly
+// like Swift splits MinimuxerImpl from the gateway itself.
+// ---------------------------------------------------------------------------
+
+fn mm_usbmuxd_retarget() {
+    mm_core::usbmuxd_proxy::retarget_usbmuxd_address();
+}
+
+async fn mm_proxy_start() -> ffi::MmOutcome {
+    let proxy = gateway_globals().proxy.clone();
+    let gw = gateway_hub().ensure_gateway();
+    outcome_from(
+        spawn_gateway(async move {
+            mm_core::usbmuxd_proxy::start_proxy_for_gateway(&proxy, &gw).await
+        })
+        .await,
+    )
+}
+
+async fn mm_proxy_stop() {
+    gateway_globals().proxy.stop().await;
+}
+
+fn mm_proxy_is_listening() -> bool {
+    gateway_globals().proxy.is_listening()
+}
+
+fn mm_proxy_notify_attached(peer_ip: String) {
+    gateway_globals().proxy.notify_device_attached(&peer_ip);
+}
+
+fn mm_proxy_notify_detached() {
+    gateway_globals().proxy.notify_device_detached();
 }
 
 // ---------------------------------------------------------------------------
@@ -773,5 +1098,94 @@ mod tests {
         // panic is the assertion here (manager-level behaviour is
         // covered by mm-net's own tests).
         let _changed = rt.block_on(mm_net_refresh());
+    }
+
+    #[test]
+    fn gateway_hub_defaults_to_idevice_backend() {
+        use mm_net::ServicePortSource;
+        let hub = GatewayHub::new();
+        assert!(matches!(
+            hub.backend(),
+            mm_gateway::GatewayBackend::Idevice
+        ));
+        assert!(hub.current_gateway().is_none());
+        assert_eq!(
+            hub.pairing_file_type(),
+            mm_common::PairingProtocol::Unknown
+        );
+        // Unknown protocol with no gateway: Swift's default port.
+        assert_eq!(hub.service_port(), 62078);
+        let gw = hub.ensure_gateway();
+        assert!(!gw.requires_usbmuxd());
+    }
+
+    #[test]
+    fn gateway_hub_switch_carries_rp_port() {
+        let hub = GatewayHub::new();
+        let gw = hub.ensure_gateway();
+        gw.set_port(50001, mm_common::PairingProtocol::RpPairing);
+        let new_gw = hub.set_backend(mm_gateway::GatewayBackend::Libimobiledevice);
+        assert!(matches!(
+            hub.backend(),
+            mm_gateway::GatewayBackend::Libimobiledevice
+        ));
+        // Minimuxer.set carries the RP port into the new instance.
+        assert_eq!(
+            new_gw.get_port(mm_common::PairingProtocol::RpPairing),
+            50001
+        );
+        // The ServicePortSource view follows the new gateway.
+        use mm_net::ServicePortSource;
+        hub.set_port(50002, mm_common::PairingProtocol::RpPairing);
+        assert_eq!(
+            new_gw.get_port(mm_common::PairingProtocol::RpPairing),
+            50002
+        );
+    }
+
+    #[test]
+    fn gateway_ffi_start_failure_surfaces_pairing_error() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let outcome = rt.block_on(mm_gateway_start("not a plist".to_string(), None));
+        assert!(!outcome.success);
+        assert_eq!(outcome.error.domain, "PairingError");
+        assert_eq!(outcome.error.code, "invalidPlist");
+    }
+
+    #[test]
+    fn gateway_ffi_fetch_udid_uninitialized() {
+        // No test ever starts the global gateway successfully, so
+        // the fetch must surface the gateway's NotInitialized.
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let outcome = rt.block_on(mm_gateway_fetch_udid());
+        assert!(!outcome.success);
+        assert_eq!(outcome.error.domain, "DeviceGatewayError");
+        assert_eq!(outcome.error.code, "notInitialized");
+    }
+
+    #[test]
+    fn gateway_ffi_defaults() {
+        assert!(matches!(
+            mm_gateway_backend(),
+            ffi::MmGatewayBackend::Idevice
+        ));
+        assert_eq!(
+            mm_gateway_service_port(ffi::MmPairingProtocol::Lockdown),
+            62078
+        );
+        assert_eq!(
+            mm_gateway_service_port(ffi::MmPairingProtocol::RpPairing),
+            49152
+        );
+        assert!(!mm_proxy_is_listening());
+    }
+
+    #[test]
+    fn proxy_start_without_pairing_is_pairing_not_loaded() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let outcome = rt.block_on(mm_proxy_start());
+        assert!(!outcome.success);
+        assert_eq!(outcome.error.domain, "MinimuxerError");
+        assert_eq!(outcome.error.code, "pairingNotLoaded");
     }
 }

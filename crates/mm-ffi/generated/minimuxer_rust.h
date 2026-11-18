@@ -37,6 +37,25 @@ typedef struct __swift_bridge__$MmNetSnapshot { void* interfaces; bool wifi_sati
 typedef struct __swift_bridge__$Option$MmNetSnapshot { bool is_some; __swift_bridge__$MmNetSnapshot val; } __swift_bridge__$Option$MmNetSnapshot;
 typedef struct __swift_bridge__$MmEndpointOutcome { bool success; void* ip; struct __swift_bridge__$MmErrorInfo error; } __swift_bridge__$MmEndpointOutcome;
 typedef struct __swift_bridge__$Option$MmEndpointOutcome { bool is_some; __swift_bridge__$MmEndpointOutcome val; } __swift_bridge__$Option$MmEndpointOutcome;
+typedef enum __swift_bridge__$MmGatewayBackendTag { __swift_bridge__$MmGatewayBackend$Idevice, __swift_bridge__$MmGatewayBackend$Libimobiledevice, } __swift_bridge__$MmGatewayBackendTag;
+typedef struct __swift_bridge__$MmGatewayBackend { __swift_bridge__$MmGatewayBackendTag tag; } __swift_bridge__$MmGatewayBackend;
+typedef struct __swift_bridge__$Option$MmGatewayBackend { bool is_some; __swift_bridge__$MmGatewayBackend val; } __swift_bridge__$Option$MmGatewayBackend;
+
+void* __swift_bridge__$Vec_MmGatewayBackend$new(void);
+void __swift_bridge__$Vec_MmGatewayBackend$drop(void* vec_ptr);
+void __swift_bridge__$Vec_MmGatewayBackend$push(void* vec_ptr, __swift_bridge__$MmGatewayBackend item);
+__swift_bridge__$Option$MmGatewayBackend __swift_bridge__$Vec_MmGatewayBackend$pop(void* vec_ptr);
+__swift_bridge__$Option$MmGatewayBackend __swift_bridge__$Vec_MmGatewayBackend$get(void* vec_ptr, uintptr_t index);
+__swift_bridge__$Option$MmGatewayBackend __swift_bridge__$Vec_MmGatewayBackend$get_mut(void* vec_ptr, uintptr_t index);
+uintptr_t __swift_bridge__$Vec_MmGatewayBackend$len(void* vec_ptr);
+void* __swift_bridge__$Vec_MmGatewayBackend$as_ptr(void* vec_ptr);
+
+typedef struct __swift_bridge__$MmOutcome { bool success; struct __swift_bridge__$MmErrorInfo error; } __swift_bridge__$MmOutcome;
+typedef struct __swift_bridge__$Option$MmOutcome { bool is_some; __swift_bridge__$MmOutcome val; } __swift_bridge__$Option$MmOutcome;
+typedef struct __swift_bridge__$MmStringOutcome { bool success; void* value; struct __swift_bridge__$MmErrorInfo error; } __swift_bridge__$MmStringOutcome;
+typedef struct __swift_bridge__$Option$MmStringOutcome { bool is_some; __swift_bridge__$MmStringOutcome val; } __swift_bridge__$Option$MmStringOutcome;
+typedef struct __swift_bridge__$MmServiceOutcome { bool success; void* service_name; uint16_t port; bool enable_ssl; struct __swift_bridge__$MmErrorInfo error; } __swift_bridge__$MmServiceOutcome;
+typedef struct __swift_bridge__$Option$MmServiceOutcome { bool is_some; __swift_bridge__$MmServiceOutcome val; } __swift_bridge__$Option$MmServiceOutcome;
 void* __swift_bridge__$mm_version(void);
 struct __swift_bridge__$MmPairingOutcome __swift_bridge__$mm_parse_pairing_file(void* content, struct __swift_bridge__$Option$MmPairingProtocol preferred);
 void* __swift_bridge__$mm_describe_error(struct __swift_bridge__$MmErrorInfo info);
@@ -56,7 +75,27 @@ bool __swift_bridge__$mm_net_observer_stop(void);
 void __swift_bridge__$mm_net_bind_connection_config(void* config);
 void __swift_bridge__$mm_net_clear_connection_config(void);
 void __swift_bridge__$mm_net_set_probe_timeout(int32_t timeout_ms);
-void __swift_bridge__$mm_net_set_pairing_protocol(struct __swift_bridge__$MmPairingProtocol protocol);
 bool __swift_bridge__$mm_net_complete_service_port(uint64_t request_id, struct __swift_bridge__$MmPairingProtocol protocol, uint16_t port);
+struct __swift_bridge__$MmGatewayBackend __swift_bridge__$mm_gateway_backend(void);
+void __swift_bridge__$mm_gateway_set_backend(struct __swift_bridge__$MmGatewayBackend backend);
+bool __swift_bridge__$mm_gateway_requires_usbmuxd(void);
+void __swift_bridge__$mm_gateway_start(void* callback_wrapper, void __swift_bridge__$mm_gateway_start$async(void* callback_wrapper, struct __swift_bridge__$MmOutcome ret), void* content, struct __swift_bridge__$Option$MmPairingProtocol preferred);
+void __swift_bridge__$mm_gateway_stop(void* callback_wrapper, void __swift_bridge__$mm_gateway_stop$async(void* callback_wrapper, struct __swift_bridge__$MmOutcome ret));
+void __swift_bridge__$mm_gateway_set_endpoint_ip(void* ip);
+struct __swift_bridge__$MmPairingProtocol __swift_bridge__$mm_gateway_pairing_protocol(void);
+uint16_t __swift_bridge__$mm_gateway_service_port(struct __swift_bridge__$MmPairingProtocol protocol);
+void __swift_bridge__$mm_gateway_set_port(uint16_t port, struct __swift_bridge__$MmPairingProtocol protocol);
+void __swift_bridge__$mm_gateway_fetch_udid(void* callback_wrapper, void __swift_bridge__$mm_gateway_fetch_udid$async(void* callback_wrapper, struct __swift_bridge__$MmStringOutcome ret));
+void __swift_bridge__$mm_gateway_get_lockdown_value(void* callback_wrapper, void __swift_bridge__$mm_gateway_get_lockdown_value$async(void* callback_wrapper, struct __swift_bridge__$MmStringOutcome ret), void* key);
+void __swift_bridge__$mm_gateway_start_session(void* callback_wrapper, void __swift_bridge__$mm_gateway_start_session$async(void* callback_wrapper, struct __swift_bridge__$MmOutcome ret));
+void __swift_bridge__$mm_gateway_stop_session(void* callback_wrapper, void __swift_bridge__$mm_gateway_stop_session$async(void* callback_wrapper, struct __swift_bridge__$MmOutcome ret));
+void __swift_bridge__$mm_gateway_open_service(void* callback_wrapper, void __swift_bridge__$mm_gateway_open_service$async(void* callback_wrapper, struct __swift_bridge__$MmServiceOutcome ret), void* service_name);
+void __swift_bridge__$mm_gateway_set_logging(bool enabled);
+void __swift_bridge__$mm_usbmuxd_retarget(void);
+void __swift_bridge__$mm_proxy_start(void* callback_wrapper, void __swift_bridge__$mm_proxy_start$async(void* callback_wrapper, struct __swift_bridge__$MmOutcome ret));
+void __swift_bridge__$mm_proxy_stop(void* callback_wrapper, void __swift_bridge__$mm_proxy_stop$async(void* callback_wrapper));
+bool __swift_bridge__$mm_proxy_is_listening(void);
+void __swift_bridge__$mm_proxy_notify_attached(void* peer_ip);
+void __swift_bridge__$mm_proxy_notify_detached(void);
 
 
