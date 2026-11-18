@@ -548,6 +548,7 @@ fn mm_version() -> String {
     format!(
         "minimuxer-rust {} (mm-ffi {}; error-map {} cases)",
         env!("CARGO_PKG_VERSION"),
+        env!("CARGO_PKG_VERSION"),
         mm_common::ERROR_CASES.len()
     )
 }
