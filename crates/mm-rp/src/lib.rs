@@ -22,10 +22,15 @@
 //!   4-byte-BE + XML plist framing and the RSDCheckin sequence
 //!   of Swift limd's `withRSDService`.
 //!
-//! Pair-setup (SRP) and the wireless pairing host are M8; this
-//! crate's `pair_verify` never falls back to setup, mirroring
-//! `rppairing_pair_verify`'s contract.
+//! M8 adds [`pairing`]: the wireless pair-setup wiring
+//! (pairable-host preparation/accept and the network
+//! pair client) over the same crate stack (diff list
+//! D-M8-1). The session layer's `pair_verify` still
+//! never falls back to setup, mirroring
+//! `rppairing_pair_verify`'s contract — setup only
+//! runs through the explicit wireless flows.
 
+pub mod pairing;
 pub mod session;
 pub mod stream;
 
@@ -33,6 +38,7 @@ pub mod stream;
 /// names its service clients through one path (D-M7-2).
 pub use idevice68;
 
+pub use pairing::{pair_network, PairHostPreparation, TcpAcceptor};
 pub use session::{
     is_pairing_error68, resolve_service_port, RpError, RpIdentity, RpResult, RpSession,
     RpTunnelInfo,
