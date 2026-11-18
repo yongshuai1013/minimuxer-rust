@@ -5,3 +5,8 @@ edition = "2021"
 
 [dependencies]
 mm-common = { path = "../mm-common" }
+# M6 decision (docs/m6-emproxy-diff.md): crate dependency on the
+# em_proxy core, pinned to the exact revision the Swift package's
+# binaryTarget ships (tag v0.9.3 == develop HEAD at pin time).
+em_proxy = { git = "https://github.com/SideStore/em_proxy", rev = "6e117e140ca7cff4ff106bdefa18147552a0e592" }
+tokio = { version = "1.44", features = ["rt", "time", "sync"] }
