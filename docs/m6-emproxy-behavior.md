@@ -198,10 +198,24 @@ start 內 C 層回 0 後才探測；探測逾時／失敗僅記錄，**不抛錯
 
 ## F. 測試執行註記
 
-- 伺服器是**程序級單例**（em_proxy GLOBAL_HANDLE）；cargo 測試
-  以 mm-emproxy 內一把共用鎖串行化所有「會 start 伺服器」的
-  測試，並各自使用獨立測試埠（A2 的 51820 預設綁定測試除外，
-  須與其他用 51820 的測試互斥——同鎖覆蓋）。
+- C FFI 面的伺服器是**程序級單例**（em_proxy GLOBAL_HANDLE，
+  僅 start/stop_emotional_damage 使用）；本 port 走
+  start_loopback，handle 為 EmProxy 實例持有（分歧 D-M6-8）。
+  cargo 測試仍以 mm-emproxy 內一把共用鎖串行化所有「會 start
+  伺服器」的測試（保險＋埠紀律），並各自使用獨立測試埠
+  （A2 的 51820 預設綁定測試除外，須與其他用 51820 的測試
+  互斥——同鎖覆蓋）。
 - 探測時參（200ms/1s/10s）在測試以注入的短化 ProbeParams
   驗節奏語義；生產值＝Swift 常數原值（總時長取
   mm-common VPN_HANDSHAKE_TIMEOUT_NS）。
+- **本機沙箱 UDP 限制（2026-11-18 實測）**：本機 Linux 沙箱對
+  unconnected UDP send 一律回 EPERM（Python 與 Rust 雙路徑
+  刻畫一致：connected send 可、bound server 的 send_to 回覆
+  不可）。em_proxy 伺服器以 send_to 回覆，故 C1/C2/C4/C5 的
+  「收回應」斷言在本機結構性不可達；四測以
+  `common::udp_replies_work()` 能力探測把關，本機印 SKIP
+  通知、macOS CI 跑全斷言。本機側的等價證據鏈（差異清單
+  §5）：initiation 封包與獨立 Python 實作逐字節一致、獨立
+  boringtun 0.7.1 同金鑰重播回 92B response、em_proxy 伺服器
+  日誌由 Decapsulation error 轉為 response 送出嘗試（僅敗於
+  沙箱 EPERM）。

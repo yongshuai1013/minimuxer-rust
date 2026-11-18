@@ -50,7 +50,7 @@ Result<ProxyHandle, c_int>` 自行持有 handle（sender＋join_handle），
 | `start(host, port)` | `EmProxy::start(&str, u16) async` | 順序：查 config（無→handshakeClientNotConfigured）→ 組 `"host:port"` → 解析 SocketAddrV4（敗→invalidSocketAddress(組串)）→ `em_proxy::start_loopback`（-4/-5 經映射）→ 握手探測（不抛） |
 | C `start_emotional_damage` 的 -1/-2（null/UTF-8） | 不可達（Rust `&str` 面） | 映射函數 `map_start_code` 保留全表供邊界與測試（行為 A4） |
 | 已在跑再 start → C 回 0 | `start` 見 handle 在場 → 直接 Ok（並記錄） | A5；探測仍照常執行（Swift 亦在 C 回 0 後續行探測） |
-| `stop()` | `EmProxy::stop() async` | handle 取出 → sender.send（敗→stopSignalFailed，優先於 join 結果，同 C 的 match 順序）→ join（敗→threadJoinFailed）；無 handle→serverNotRunning |
+| `stop()` | `EmProxy::stop()`（同步；async 形狀在 FFI 面，同 Swift 的 withFFIDispatch 跳板） | handle 取出 → sender.send（敗→stopSignalFailed，優先於 join 結果，同 C 的 match 順序）→ join（敗→threadJoinFailed）；無 handle→serverNotRunning |
 | init 註冊 log 回呼 | 首次建構時 `register_log_callback_once`（Once） | 轉發規則：前綴 `[EMProxy] `、level≤1→verbose、≥2→debug（行為 A8）；em_proxy 以 CString 呼叫、回 true 消費 |
 | `triggerVPNHandshake` | `probe_trigger` | 200ms 間隔、總時長、1s 單次上限皆 ProbeParams（生產＝Swift 常數；測試注入短化） |
 | `probeVPNHandshake` | `probe_candidates` | 候選源注入（見 §3 接線）；並行探全部候選、首勝即輪勝（tokio JoinSet，勝出即 abort 其餘——Swift TaskGroup 是等全組回報後 cancelAll，首勝語義同、時延差異見 D-M6-3） |
@@ -107,3 +107,29 @@ Result<ProxyHandle, c_int>` 自行持有 handle（sender＋join_handle），
   （候選 provider）以閉包注入解決，未新增 crate 相依邊
   （DESIGN §2 的 crate 圖不變：mm-emproxy 只相依 em_proxy、
   mm-common、tokio）；provider 的組裝在 mm-core。
+- **D-M6-8**：C 層的跨實例全域單例（GLOBAL_HANDLE）不複刻。
+  Swift 側 EMProxyImpl 亦僅由 Minimuxer 單例持有一份，
+  App 可達情境下「每 MinimuxerCore 一個 EmProxy、handle
+  實例持有」與全域單例語義等價；第二個 Minimuxer 實例同存
+  的邊界情境 App 不可達（Minimuxer.shared 單例）。
+
+## 5. 測試轉寫事故與本機證據鏈（2026-11-18）
+
+- **INITIAL_CHAIN_KEY 轉寫事故**：WG 測試常數初版把
+  initialChainKey 寫錯（第 4 位元組起全錯），伺服器回
+  `Decapsulation error: InvalidAeadTag`。逐層對版後定讞：
+  Swift 原文（EMProxyTests.swift:252-255）、boringtun 0.7.1
+  常數、BLAKE2s("Noise_IKpsk2_25519_ChaChaPoly_BLAKE2s")
+  真值三方一致，錯在本 port 的轉寫。教訓：常數一律自源碼
+  檔逐字節複製，不經二手摘要。修正後中間值（eph_pub／dh1／
+  ck／key1／hash／client_pub／dh2）與獨立 Python 實作全數
+  一致、enc_static 逐字節一致。
+- **本機沙箱 UDP EPERM**：見行為清單 §F。本機 C 組證據鏈：
+  (1) initiation 封包與獨立 Python（RFC 8439 向量驗過的
+  ChaChaPoly＋RFC 7748 ladder＋hashlib BLAKE2s）逐字節一致；
+  (2) 同封包餵獨立 boringtun 0.7.1 Tunn（同金鑰）回 92B
+  handshake response；(3) 經 em_proxy 實跑，伺服器日誌自
+  「Decapsulation error」轉為「Error sending UDP packet:
+  EPERM」——即 boringtun 已產出 response、僅送出被沙箱擋。
+  C1/C2/C4/C5 全斷言待 macOS CI 裁決（workflow 的 cargo
+  test 步）。
