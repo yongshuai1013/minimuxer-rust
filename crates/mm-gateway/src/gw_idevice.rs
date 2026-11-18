@@ -123,6 +123,17 @@ impl IdeviceGateway {
         })
     }
 
+    /// The M5 operations context (endpoint + pairing file).
+    fn m5_ctx(&self) -> Result<crate::gw_idevice_ops::IdeviceCtx, MmErrorInfo> {
+        let ip_string = self.require_endpoint_ip()?;
+        let addr = parse_endpoint_ip(&ip_string)?;
+        let pairing_file = self.require_pairing_file()?;
+        Ok(crate::gw_idevice_ops::IdeviceCtx {
+            endpoint_ip: addr,
+            pairing_file,
+        })
+    }
+
     /// Connects a fresh lockdownd client over TCP (the lockdown
     /// half of Swift `performWithEitherService`).
     async fn connect_lockdown(&self) -> Result<LockdownClient, MmErrorInfo> {
@@ -400,6 +411,275 @@ impl DeviceGateway for IdeviceGateway {
             })
         })
     }
+    // ------------------------------------------------------------------
+    // M5: DDI mount, install pipeline, profiles, debug
+    // (docs/m5-install-ddi-debug-diff.md). RP routes return
+    // unsupported until M7, per the established convention.
+    // ------------------------------------------------------------------
+
+    fn is_ddi_mounted<'a>(&'a self) -> GatewayFuture<'a, bool> {
+        Box::pin(async move {
+            self.verify_initialized()?;
+            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
+                return Err(unsupported("isDDIMounted"));
+            }
+            let ctx = self.m5_ctx()?;
+            Ok(crate::gw_idevice_ops::is_ddi_mounted(&ctx).await)
+        })
+    }
+
+    fn mount_developer_image<'a>(
+        &'a self,
+        image: &'a [u8],
+        signature: &'a [u8],
+    ) -> GatewayFuture<'a, ()> {
+        Box::pin(async move {
+            self.verify_initialized()?;
+            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
+                return Err(unsupported("mountDeveloperImage"));
+            }
+            let ctx = self.m5_ctx()?;
+            crate::gw_idevice_ops::mount_developer_image(&ctx, image, signature).await
+        })
+    }
+
+    fn mount_personalized_ddi<'a>(
+        &'a self,
+        image: &'a [u8],
+        trustcache: &'a [u8],
+        build_manifest: &'a [u8],
+    ) -> GatewayFuture<'a, ()> {
+        Box::pin(async move {
+            self.verify_initialized()?;
+            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
+                return Err(unsupported("mountPersonalizedDdi"));
+            }
+            let ctx = self.m5_ctx()?;
+            crate::gw_idevice_ops::mount_personalized_ddi(
+                &ctx,
+                image,
+                trustcache,
+                build_manifest,
+            )
+            .await
+        })
+    }
+
+    fn install_provisioning_profile<'a>(
+        &'a self,
+        profile: &'a [u8],
+    ) -> GatewayFuture<'a, ()> {
+        Box::pin(async move {
+            self.verify_initialized()?;
+            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
+                return Err(unsupported("installProvisioningProfile"));
+            }
+            let ctx = self.m5_ctx()?;
+            crate::gw_idevice_ops::misagent_install(&ctx, profile).await
+        })
+    }
+
+    fn remove_provisioning_profile<'a>(
+        &'a self,
+        profile_id: &'a str,
+    ) -> GatewayFuture<'a, ()> {
+        Box::pin(async move {
+            self.verify_initialized()?;
+            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
+                return Err(unsupported("removeProvisioningProfile"));
+            }
+            let ctx = self.m5_ctx()?;
+            crate::gw_idevice_ops::misagent_remove(&ctx, profile_id).await
+        })
+    }
+
+    fn dump_profiles<'a>(&'a self, docs_path: &'a str) -> GatewayFuture<'a, String> {
+        Box::pin(async move {
+            self.verify_initialized()?;
+            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
+                return Err(unsupported("dumpProfiles"));
+            }
+            let ctx = self.m5_ctx()?;
+            let payloads = crate::gw_idevice_ops::misagent_copy_all(&ctx).await?;
+            Ok(dump_profiles_to_disk(docs_path, &payloads))
+        })
+    }
+
+    fn remove_app<'a>(&'a self, bundle_id: &'a str) -> GatewayFuture<'a, ()> {
+        Box::pin(async move {
+            self.verify_initialized()?;
+            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
+                return Err(unsupported("removeApp"));
+            }
+            let ctx = self.m5_ctx()?;
+            crate::gw_idevice_ops::instproxy_uninstall(&ctx, bundle_id).await
+        })
+    }
+
+    fn send_ipa_afc<'a>(
+        &'a self,
+        bundle_id: &'a str,
+        ipa_bytes: &'a [u8],
+    ) -> GatewayFuture<'a, ()> {
+        Box::pin(async move {
+            self.verify_initialized()?;
+            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
+                return Err(unsupported("sendIpaAfc"));
+            }
+            let ctx = self.m5_ctx()?;
+            crate::gw_idevice_ops::send_ipa_afc(&ctx, bundle_id, ipa_bytes).await
+        })
+    }
+
+    fn send_app_bundle_afc<'a>(
+        &'a self,
+        bundle_id: &'a str,
+        app_path: &'a str,
+    ) -> GatewayFuture<'a, ()> {
+        Box::pin(async move {
+            self.verify_initialized()?;
+            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
+                return Err(unsupported("sendAppBundleAfc"));
+            }
+            let ctx = self.m5_ctx()?;
+            crate::gw_idevice_ops::send_app_bundle_afc(
+                &ctx,
+                bundle_id,
+                std::path::Path::new(app_path),
+            )
+            .await
+        })
+    }
+
+    fn install_ipa<'a>(&'a self, bundle_id: &'a str) -> GatewayFuture<'a, ()> {
+        Box::pin(async move {
+            self.verify_initialized()?;
+            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
+                return Err(unsupported("installIpa"));
+            }
+            let ctx = self.m5_ctx()?;
+            let package_path = format!("PublicStaging/{bundle_id}/app.ipa");
+            crate::gw_idevice_ops::instproxy_install(
+                &ctx,
+                &package_path,
+                None,
+                "Failed to install IPA",
+            )
+            .await
+        })
+    }
+
+    fn install_app_bundle<'a>(
+        &'a self,
+        bundle_id: &'a str,
+        app_name: &'a str,
+    ) -> GatewayFuture<'a, ()> {
+        Box::pin(async move {
+            self.verify_initialized()?;
+            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
+                return Err(unsupported("installAppBundle"));
+            }
+            let ctx = self.m5_ctx()?;
+            let package_path = format!("PublicStaging/{bundle_id}/{app_name}");
+            let mut options = plist::Dictionary::new();
+            options.insert(
+                "PackageType".into(),
+                plist::Value::String("Developer".into()),
+            );
+            crate::gw_idevice_ops::instproxy_install(
+                &ctx,
+                &package_path,
+                Some(options),
+                "Failed to install App directory",
+            )
+            .await
+        })
+    }
+
+    fn wipe_container<'a>(&'a self, bundle_id: &'a str) -> GatewayFuture<'a, ()> {
+        Box::pin(async move {
+            self.verify_initialized()?;
+            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
+                return Err(unsupported("wipeContainer"));
+            }
+            let ctx = self.m5_ctx()?;
+            crate::gw_idevice_ops::wipe_container(&ctx, bundle_id).await
+        })
+    }
+
+    fn debug_app<'a>(&'a self, bundle_id: &'a str) -> GatewayFuture<'a, ()> {
+        Box::pin(async move {
+            self.verify_initialized()?;
+            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
+                return Err(unsupported("debugApp"));
+            }
+            let ctx = self.m5_ctx()?;
+            let mux_addr = usbmuxd_addr_from_env(
+                std::env::var(mm_common::constants::USBMUXD_ENV_KEY)
+                    .ok()
+                    .as_deref(),
+            );
+            crate::gw_idevice_ops::debug_app(&ctx, bundle_id, &mux_addr).await
+        })
+    }
+
+    fn debug_process<'a>(&'a self, _pid: u32) -> GatewayFuture<'a, ()> {
+        Box::pin(async move {
+            self.verify_initialized()?;
+            // Swift parity (D-M5-1): the idevice backend's
+            // lockdown debugProcess throws unsupportedOperation
+            // with this reason, verbatim.
+            Err(gw_error(
+                DeviceGatewayCode::UnsupportedOperation,
+                "Attaching to process by PID is only supported in.rppairing mode",
+            ))
+        })
+    }
+
+    fn afc_list_directory<'a>(
+        &'a self,
+        bundle_id: &'a str,
+        path: &'a str,
+    ) -> GatewayFuture<'a, Vec<String>> {
+        Box::pin(async move {
+            self.verify_initialized()?;
+            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
+                return Err(unsupported("afcListDirectory"));
+            }
+            let ctx = self.m5_ctx()?;
+            crate::gw_idevice_ops::afc_list_directory(&ctx, bundle_id, path).await
+        })
+    }
+
+    fn afc_read_file<'a>(
+        &'a self,
+        bundle_id: &'a str,
+        path: &'a str,
+    ) -> GatewayFuture<'a, Vec<u8>> {
+        Box::pin(async move {
+            self.verify_initialized()?;
+            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
+                return Err(unsupported("afcReadFile"));
+            }
+            let ctx = self.m5_ctx()?;
+            crate::gw_idevice_ops::afc_read_file(&ctx, bundle_id, path).await
+        })
+    }
+
+    fn afc_get_file_info<'a>(
+        &'a self,
+        bundle_id: &'a str,
+        path: &'a str,
+    ) -> GatewayFuture<'a, crate::gateway::AfcFileInfo> {
+        Box::pin(async move {
+            self.verify_initialized()?;
+            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
+                return Err(unsupported("afcGetFileInfo"));
+            }
+            let ctx = self.m5_ctx()?;
+            crate::gw_idevice_ops::afc_get_file_info(&ctx, bundle_id, path).await
+        })
+    }
 }
 
 /// Swift `withSockaddr` address parsing: `%scope` suffixes are
@@ -505,4 +785,66 @@ pub async fn usbmuxd_provider(
         device_id: device.device_id,
         label: label.to_string(),
     })
+}
+
+/// Swift `IdeviceGateway.dumpProfiles`' file half: split each
+/// misagent payload at its plist markers and write
+/// `<UUID>.mobileprovision` (full payload) + `<UUID>.plist`
+/// (plist bytes), or `unknown_<i>.mobileprovision` when the
+/// plist carries no UUID; payloads without a plist section
+/// are skipped; all write errors are swallowed, as in Swift.
+fn dump_profiles_to_disk(docs_path: &str, payloads: &[Vec<u8>]) -> String {
+    let docs = docs_path.strip_prefix("file://").unwrap_or(docs_path);
+    let dump_dir = if docs.ends_with("/Profiles") || docs.ends_with("/Profiles/") {
+        docs.to_string()
+    } else {
+        format!("{docs}/Profiles")
+    };
+    let _ = std::fs::create_dir_all(&dump_dir);
+    for (i, bytes) in payloads.iter().enumerate() {
+        let Some(start) = find_subslice(bytes, b"<?xml version=") else {
+            continue;
+        };
+        let Some(end_rel) = find_subslice(&bytes[start..], b"</plist>") else {
+            continue;
+        };
+        let plist_bytes = &bytes[start..start + end_rel + b"</plist>".len()];
+        let uuid = plist::Value::from_reader(std::io::Cursor::new(plist_bytes))
+            .ok()
+            .and_then(|v| match v {
+                plist::Value::Dictionary(d) => match d.get("UUID") {
+                    Some(plist::Value::String(u)) => Some(u.clone()),
+                    _ => None,
+                },
+                _ => None,
+            });
+        match uuid {
+            Some(uuid) => {
+                let _ = std::fs::write(
+                    format!("{dump_dir}/{uuid}.mobileprovision"),
+                    bytes,
+                );
+                let _ = std::fs::write(
+                    format!("{dump_dir}/{uuid}.plist"),
+                    plist_bytes,
+                );
+            }
+            None => {
+                let _ = std::fs::write(
+                    format!("{dump_dir}/unknown_{i}.mobileprovision"),
+                    bytes,
+                );
+            }
+        }
+    }
+    dump_dir
+}
+
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || haystack.len() < needle.len() {
+        return None;
+    }
+    haystack
+        .windows(needle.len())
+        .position(|w| w == needle)
 }

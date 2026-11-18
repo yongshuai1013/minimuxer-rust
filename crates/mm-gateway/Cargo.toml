@@ -16,6 +16,8 @@ limd = ["dep:rusty_libimobiledevice", "dep:plist_plus"]
 mm-common = { path = "../mm-common" }
 mm-rp = { path = "../mm-rp" }
 plist = "1"
+rustls = "0.23"
+tokio-rustls = "0.26"
 tokio = { version = "1.44", features = ["rt", "sync", "time"] }
 idevice = { version = "0.1.29", features = ["full"] }
 rusty_libimobiledevice = { git = "https://github.com/SideStore/rusty_libimobiledevice", features = [

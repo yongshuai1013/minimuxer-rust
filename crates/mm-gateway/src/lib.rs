@@ -27,6 +27,7 @@ pub mod afc_session;
 pub mod base;
 pub mod gateway;
 pub mod gw_idevice;
+pub mod gw_idevice_ops;
 #[cfg(feature = "limd")]
 pub mod gw_limd;
 pub mod rawconn;
