@@ -2,7 +2,33 @@
 name = "mm-gateway"
 version = "0.1.0"
 edition = "2021"
+description = "Minimuxer Rust rewrite: DeviceGateway trait + base state (port of Swift BaseDeviceGateway) and the two backends — gw-idevice (idevice crate, direct TCP lockdown) and gw-limobiledevice (rusty_libimobiledevice via the usbmuxd proxy). M3: lockdown basic chain."
+
+[features]
+# The libimobiledevice backend binds the C library through
+# pregenerated extern declarations; host test binaries cannot link
+# it where libimobiledevice is absent (same reason the legacy
+# crate's tests never ran in CI). The shipped staticlib enables it
+# via mm-ffi's `limd` feature. See docs/m3-gateway-diff.md (D-7).
+limd = ["dep:rusty_libimobiledevice"]
 
 [dependencies]
 mm-common = { path = "../mm-common" }
 mm-rp = { path = "../mm-rp" }
+plist = "1"
+tokio = { version = "1.44", features = ["rt", "sync", "time"] }
+idevice = { version = "0.1.29", features = ["full"] }
+rusty_libimobiledevice = { git = "https://github.com/SideStore/rusty_libimobiledevice", features = [
+  "dynamic",
+], default-features = false, optional = true }
+
+[dev-dependencies]
+tokio = { version = "1.44", features = [
+  "macros",
+  "rt-multi-thread",
+  "net",
+  "time",
+  "io-util",
+] }
+rustls = "0.23"
+tokio-rustls = "0.26"

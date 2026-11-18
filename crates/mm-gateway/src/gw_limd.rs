@@ -1,0 +1,384 @@
+//! `LibimobiledeviceGateway` — port of Swift
+//! `LibimobiledeviceGateway` (yongshuai1013/minimuxer @714aafa3)
+//! over rusty_libimobiledevice (feature `limd`, diff list D-7).
+//!
+//! M3 covers the lockdown basic chain: `start`/`stop`,
+//! `fetch_udid` (live query with cached-UDID fallback — this
+//! backend's own semantics, distinct from gw-idevice),
+//! `get_lockdown_value`, session proof via the handshake client,
+//! and `open_service` (lockdownd_start_service). Every operation
+//! runs the Swift `withDevice` → `withLockdown` → `withService`
+//! chain on a blocking thread: `idevice_new_with_options`
+//! (USBMUX|NETWORK lookup by UDID; in-App the usbmuxd lookups are
+//! retargeted to the mm-core proxy via `USBMUXD_SOCKET_ADDRESS`),
+//! then `lockdownd_client_new_with_handshake`.
+//!
+//! Error reasons embed the C error code, exactly like the Swift
+//! code's `code \(err.rawValue)` formats; the numeric codes are
+//! recovered from the wrapper's error enums via the reverse tables
+//! below (the wrapper itself only keeps the enum).
+
+use std::sync::Mutex;
+
+use mm_common::constants::APP_NAME;
+use mm_common::logging::debug_log;
+use mm_common::{DeviceGatewayCode, MmErrorInfo, PairingProtocol};
+use rusty_libimobiledevice::error::{IdeviceError as LimdIdeviceError, LockdowndError};
+
+use crate::base::GatewayCore;
+use crate::gateway::{gw_error, unsupported, DeviceGateway, GatewayBackend, GatewayFuture, OpenedService};
+
+/// Swift `LibimobiledeviceGateway` (`requiresUsbmuxd = true`).
+pub struct LibimobiledeviceGateway {
+    core: GatewayCore,
+    /// Swift's `cachedUDID`: set from the pairing file at `start`,
+    /// refreshed by successful live UDID queries, and part of this
+    /// backend's `verifyInitialized` condition.
+    cached_udid: Mutex<Option<String>>,
+}
+
+impl Default for LibimobiledeviceGateway {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl LibimobiledeviceGateway {
+    pub fn new() -> Self {
+        Self {
+            core: GatewayCore::new(),
+            cached_udid: Mutex::new(None),
+        }
+    }
+
+    fn cleanup(&self) {
+        debug_log("[LibimobiledeviceGateway] cleanup() called");
+        *self.cached_udid.lock().unwrap() = None;
+        self.core.cleanup();
+    }
+
+    /// Swift `verifyInitialized()` — stricter than gw-idevice:
+    /// requires a cached UDID as well as the flag.
+    fn verify_initialized(&self) -> Result<String, MmErrorInfo> {
+        let cached = self.cached_udid.lock().unwrap().clone();
+        match (self.core.is_initialized(), cached) {
+            (true, Some(udid)) => Ok(udid),
+            _ => Err(gw_error(DeviceGatewayCode::NotInitialized, "")),
+        }
+    }
+}
+
+/// Reverse of the wrapper's `From<i32> for LockdowndError` table,
+/// so Swift's `code <n>` reason formats survive the round trip.
+fn lockdownd_error_code(err: &LockdowndError) -> i32 {
+    use LockdowndError::*;
+    match err {
+        Success => 0,
+        InvalidArg => -1,
+        InvalidConf => -2,
+        PlistError => -3,
+        PairingFailed => -4,
+        SslError => -5,
+        DictError => -6,
+        RecieveTimeout => -7,
+        MuxError => -8,
+        NoRunningSession => -9,
+        InvalidResponse => -10,
+        MissingKey => -11,
+        MissingValue => -12,
+        GetProhibited => -13,
+        SetProhibited => -14,
+        RemoveProhibited => -15,
+        ImmutableValue => -16,
+        PasswordProtected => -17,
+        UserDeniedPairing => -18,
+        PairingDialogueRepsonsePending => -19,
+        MissingHostId => -20,
+        InvalidHostId => -21,
+        SessionActive => -22,
+        SessionInactive => -23,
+        MissingSessionId => -24,
+        InvalidSessionId => -25,
+        MissingService => -26,
+        InvalidService => -27,
+        ServiceLimit => -28,
+        MissingPairRecord => -29,
+        SavePairRecordFailed => -30,
+        InvalidPairRecord => -31,
+        InvalidActivationRecord => -32,
+        MissingActivationRecord => -33,
+        ServiceProhibited => -34,
+        EscrowLocked => -35,
+        PairingProhibitedOverThisConnection => -36,
+        FmipProtected => -37,
+        McProtected => -38,
+        McChallengeRequired => -39,
+        MissingObjectDepenency => -100,
+        UnknownError => -999,
+    }
+}
+
+/// Reverse of the wrapper's `From<i32> for IdeviceError` table
+/// (idevice.h). `UnknownError` has no recoverable code; -999 marks
+/// the lossy round trip.
+fn idevice_error_code(err: &LimdIdeviceError) -> i32 {
+    use LimdIdeviceError::*;
+    match err {
+        Success => 0,
+        InvalidArg => -1,
+        NoDevice => -3,
+        NotEnoughData => -4,
+        ConnRefused => -5,
+        SslError => -6,
+        Timeout => -7,
+        UnknownError => -999,
+    }
+}
+
+/// Swift `withDevice` + `withLockdown`: look the device up by UDID
+/// and open a handshake lockdownd client. Runs entirely on the
+/// calling (blocking) thread; all C handles are created and dropped
+/// inside the closure.
+fn with_lockdown<T>(
+    udid: &str,
+    body: impl FnOnce(
+        rusty_libimobiledevice::services::lockdownd::LockdowndClient<'_>,
+    ) -> Result<T, MmErrorInfo>,
+) -> Result<T, MmErrorInfo> {
+    let device = rusty_libimobiledevice::idevice::get_device(udid).map_err(|e| {
+        gw_error(
+            DeviceGatewayCode::ConnectionFailed,
+            format!(
+                "idevice_new_with_options failed with code {}",
+                idevice_error_code(&e)
+            ),
+        )
+    })?;
+    let client = device
+        .new_lockdownd_client(APP_NAME)
+        .map_err(|e| {
+            gw_error(
+                DeviceGatewayCode::ConnectionFailed,
+                format!(
+                    "lockdownd_client_new_with_handshake failed with code {}",
+                    lockdownd_error_code(&e)
+                ),
+            )
+        })?;
+    body(client)
+}
+
+/// Swift `syncGetLockdownValue` (lockdown branch).
+fn limd_get_value(udid: &str, key: &str) -> Result<String, MmErrorInfo> {
+    with_lockdown(udid, |client| {
+        let value = client.get_value(key, "").map_err(|e| {
+            gw_error(
+                DeviceGatewayCode::ServiceError,
+                format!(
+                    "Failed to get lockdown value for key '{key}': code {}",
+                    lockdownd_error_code(&e)
+                ),
+            )
+        })?;
+        value.get_string_val().map_err(|_| {
+            gw_error(
+                DeviceGatewayCode::ServiceError,
+                format!("Lockdown value for key '{key}' could not be decoded as string"),
+            )
+        })
+    })
+}
+
+impl DeviceGateway for LibimobiledeviceGateway {
+    fn backend(&self) -> GatewayBackend {
+        GatewayBackend::Libimobiledevice
+    }
+
+    fn core(&self) -> &GatewayCore {
+        &self.core
+    }
+
+    fn set_logging(&self, enabled: bool) {
+        self.core.set_logging(enabled);
+        // Swift also sets the RP logger level; the RP half has no
+        // equivalent until M7.
+        rusty_libimobiledevice::idevice::set_debug(enabled);
+    }
+
+    fn start<'a>(
+        &'a self,
+        pairing_file_content: &'a str,
+        preferred: Option<PairingProtocol>,
+    ) -> GatewayFuture<'a, ()> {
+        Box::pin(async move {
+            debug_log("[LibimobiledeviceGateway] start() called");
+            self.cleanup();
+            // Swift rethrows the parser's PairingError unwrapped.
+            let parsed = mm_common::parse_pairing_content(pairing_file_content, preferred)
+                .map_err(|e| e.to_info())?;
+            self.core
+                .set_pairing_file_data(Some(parsed.raw_data().to_vec()));
+            self.core.set_pairing_file_type(parsed.mode());
+            match &parsed {
+                mm_common::PairingFile::Lockdown(lockdown) => {
+                    if lockdown.udid.is_empty() {
+                        return Err(gw_error(
+                            DeviceGatewayCode::InvalidPairingFile,
+                            "Missing UDID in pairing file",
+                        ));
+                    }
+                    *self.cached_udid.lock().unwrap() = Some(lockdown.udid.clone());
+                }
+                mm_common::PairingFile::Rp(_) => {
+                    // Diff list D-2: the RP identity object
+                    // (RemotePairingKit) is an M7 concern; M3 stores
+                    // the parsed state only.
+                }
+            }
+            self.core.set_initialized(true);
+            Ok(())
+        })
+    }
+
+    fn stop<'a>(&'a self) -> GatewayFuture<'a, ()> {
+        Box::pin(async move {
+            self.cleanup();
+            Ok(())
+        })
+    }
+
+    fn fetch_udid<'a>(&'a self) -> GatewayFuture<'a, String> {
+        Box::pin(async move {
+            let udid = self.verify_initialized()?;
+            // Swift: try the live query first; on failure *or* an
+            // empty value, fall back to the cached UDID.
+            let live = tokio::task::spawn_blocking(move || {
+                limd_get_value(&udid, "UniqueDeviceID")
+            })
+            .await
+            .map_err(|e| {
+                gw_error(
+                    DeviceGatewayCode::ServiceError,
+                    format!("lockdown task failed: {e}"),
+                )
+            })?;
+            match live {
+                Ok(value) if !value.is_empty() => {
+                    *self.cached_udid.lock().unwrap() = Some(value.clone());
+                    Ok(value)
+                }
+                _ => {
+                    let cached = self.cached_udid.lock().unwrap().clone();
+                    match cached {
+                        Some(cached) if !cached.is_empty() => Ok(cached),
+                        _ => Err(gw_error(
+                            DeviceGatewayCode::ServiceError,
+                            "UniqueDeviceID not found on device",
+                        )),
+                    }
+                }
+            }
+        })
+    }
+
+    fn get_lockdown_value<'a>(&'a self, key: &'a str) -> GatewayFuture<'a, String> {
+        Box::pin(async move {
+            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
+                self.verify_initialized()?;
+                return Err(unsupported("getLockdownValue"));
+            }
+            let udid = self.verify_initialized()?;
+            let key = key.to_string();
+            tokio::task::spawn_blocking(move || limd_get_value(&udid, &key))
+                .await
+                .map_err(|e| {
+                    gw_error(
+                        DeviceGatewayCode::ServiceError,
+                        format!("lockdown task failed: {e}"),
+                    )
+                })?
+        })
+    }
+
+    fn start_session<'a>(&'a self) -> GatewayFuture<'a, ()> {
+        Box::pin(async move {
+            let udid = self.verify_initialized()?;
+            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
+                return Err(unsupported("startSession"));
+            }
+            // The handshake client *is* the session on this backend;
+            // prove it with the UDID query Swift's client performs
+            // implicitly, then drop it (Swift caches no lockdown
+            // session either — every operation re-handshakes).
+            tokio::task::spawn_blocking(move || {
+                with_lockdown(&udid, |client| {
+                    client.get_device_udid().map(|_| ()).map_err(|e| {
+                        gw_error(
+                            DeviceGatewayCode::ConnectionFailed,
+                            format!(
+                                "lockdownd_client_new_with_handshake failed with code {}",
+                                lockdownd_error_code(&e)
+                            ),
+                        )
+                    })
+                })
+            })
+            .await
+            .map_err(|e| {
+                gw_error(
+                    DeviceGatewayCode::ServiceError,
+                    format!("lockdown task failed: {e}"),
+                )
+            })?
+        })
+    }
+
+    fn stop_session<'a>(&'a self) -> GatewayFuture<'a, ()> {
+        // No cached session exists on this backend (see above).
+        Box::pin(async move { Ok(()) })
+    }
+
+    fn open_service<'a>(&'a self, service_name: &'a str) -> GatewayFuture<'a, OpenedService> {
+        Box::pin(async move {
+            let udid = self.verify_initialized()?;
+            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
+                return Err(unsupported("openService"));
+            }
+            let service_name_owned = service_name.to_string();
+            let opened = tokio::task::spawn_blocking(move || {
+                with_lockdown(&udid, |mut client| {
+                    let service = client
+                        .start_service(service_name_owned.clone(), false)
+                        .map_err(|e| {
+                            gw_error(
+                                DeviceGatewayCode::ServiceError,
+                                format!(
+                                    "Failed to start lockdown service '{}': code {}",
+                                    service_name_owned,
+                                    lockdownd_error_code(&e)
+                                ),
+                            )
+                        })?;
+                    Ok(OpenedService {
+                        service_name: service_name_owned.clone(),
+                        // The wrapper's start_service leaves the
+                        // descriptor port unread (it stores 0);
+                        // typed clients consume the descriptor
+                        // directly in M5, so the port is not
+                        // surfaced on this backend.
+                        port: service.port as u16,
+                        enable_ssl: false,
+                    })
+                })
+            })
+            .await
+            .map_err(|e| {
+                gw_error(
+                    DeviceGatewayCode::ServiceError,
+                    format!("lockdown task failed: {e}"),
+                )
+            })?;
+            opened
+        })
+    }
+}

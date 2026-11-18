@@ -1493,8 +1493,14 @@ dependencies = [
 name = "mm-gateway"
 version = "0.1.0"
 dependencies = [
+ "idevice",
  "mm-common",
  "mm-rp",
+ "plist",
+ "rustls",
+ "rusty_libimobiledevice",
+ "tokio",
+ "tokio-rustls",
 ]
 
 [[package]]
