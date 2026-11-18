@@ -167,12 +167,21 @@ jobs:
       - name: Typecheck isolated references
         run: |
           INC=/tmp/mmx/MinimuxerRust.xcframework/ios-arm64/Headers
-          printf 'import minimuxer_rust\nlet a = __swift_bridge__$mm_core_status\nlet b = __swift_bridge__$mm_gateway_service_port\n' > /tmp/t1.swift
-          echo "=== control (status/service_port):"
-          xcrun swiftc -typecheck -I "$INC" /tmp/t1.swift && echo CONTROL_OK || echo CONTROL_FAIL
-          printf 'import minimuxer_rust\nlet c = __swift_bridge__$mm_core_set_params\n' > /tmp/t2.swift
-          echo "=== set_params reference:"
-          xcrun swiftc -typecheck -I "$INC" /tmp/t2.swift && echo SETPARAMS_OK || echo SETPARAMS_FAIL
-          printf 'import minimuxer_rust\nlet d = __swift_bridge__$mm_parse_pairing_file\nlet e = __swift_bridge__$Vec_MmGatewayBackend$pop\n' > /tmp/t3.swift
-          echo "=== option-enum controls:"
-          xcrun swiftc -typecheck -I "$INC" /tmp/t3.swift && echo CONTROLS2_OK || echo CONTROLS2_FAIL
+          cat > /tmp/shapes.h << 'HDR'
+          #include "minimuxer_rust/minimuxer_rust.h"
+          #include "minimuxer_rust/SwiftBridgeCore.h"
+          void diag_f1(struct __swift_bridge__$Option$MmGatewayBackend b);
+          void diag_f2(struct __private__OptionU16 p);
+          void diag_f3(struct __private__OptionI32 p);
+          void diag_f4(struct __swift_bridge__$Option$MmGatewayBackend b, struct __private__OptionU16 p, struct __private__OptionI32 t);
+          void diag_f5(struct __swift_bridge__$Option$MmPairingProtocol p);
+          void diag_f6(struct __private__OptionU16 p, struct __private__OptionI32 t);
+          HDR
+          mkdir -p /tmp/shapemod/diagshapes
+          cp /tmp/shapes.h /tmp/shapemod/diagshapes/shapes.h
+          printf 'module diagshapes {\n\theader "shapes.h"\n\texport *\n}\n' > /tmp/shapemod/diagshapes/module.modulemap
+          for f in f1 f2 f3 f4 f5 f6; do
+            printf 'import minimuxer_rust\nimport diagshapes\nlet x = diag_%s\n' "$f" > /tmp/ts.swift
+            echo "=== diag_$f:"
+            xcrun swiftc -typecheck -I "$INC" -I /tmp/shapemod /tmp/ts.swift && echo "DIAG_${f}_OK" || echo "DIAG_${f}_FAIL"
+          done
