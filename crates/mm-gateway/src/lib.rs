@@ -24,7 +24,8 @@ pub mod gw_limd;
 
 pub use base::GatewayCore;
 pub use gateway::{
-    DeviceGateway, GatewayBackend, GatewayFuture, GatewayProvider, OpenedService,
+    unsupported, DeviceGateway, GatewayBackend, GatewayFuture, GatewayProvider,
+    OpenedService,
 };
 pub use gw_idevice::IdeviceGateway;
 #[cfg(feature = "limd")]
