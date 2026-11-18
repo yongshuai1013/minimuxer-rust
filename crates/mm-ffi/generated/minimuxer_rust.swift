@@ -1043,86 +1043,103 @@ public func mm_core_is_pairing_file_loaded() -> Bool {
 public func mm_core_last_beat_successful() -> Bool {
     __swift_bridge__$mm_core_last_beat_successful()
 }
+@_used
 @_cdecl("__swift_bridge__$MmEventSink$on_log")
 func __swift_bridge__MmEventSink_on_log (_ this: UnsafeMutableRawPointer, _ message: UnsafeMutableRawPointer) {
     Unmanaged<MmEventSink>.fromOpaque(this).takeUnretainedValue().on_log(message: RustString(ptr: message))
 }
 
+@_used
 @_cdecl("__swift_bridge__$MmEventSink$on_status")
 func __swift_bridge__MmEventSink_on_status (_ this: UnsafeMutableRawPointer, _ seq: UInt64, _ success: Bool, _ domain: UnsafeMutableRawPointer, _ code: UnsafeMutableRawPointer, _ reason: UnsafeMutableRawPointer) {
     Unmanaged<MmEventSink>.fromOpaque(this).takeUnretainedValue().on_status(seq: seq, success: success, domain: RustString(ptr: domain), code: RustString(ptr: code), reason: RustString(ptr: reason))
 }
 
+@_used
 @_cdecl("__swift_bridge__$MmConnectionConfig$set_tunnel_iface_ip")
 func __swift_bridge__MmConnectionConfig_set_tunnel_iface_ip (_ this: UnsafeMutableRawPointer, _ ip: UnsafeMutableRawPointer?) {
     Unmanaged<MmConnectionConfig>.fromOpaque(this).takeUnretainedValue().set_tunnel_iface_ip(ip: { let val = ip; if val != nil { return RustString(ptr: val!) } else { return nil } }())
 }
 
+@_used
 @_cdecl("__swift_bridge__$MmConnectionConfig$set_tunnel_peer_ip")
 func __swift_bridge__MmConnectionConfig_set_tunnel_peer_ip (_ this: UnsafeMutableRawPointer, _ ip: UnsafeMutableRawPointer?) {
     Unmanaged<MmConnectionConfig>.fromOpaque(this).takeUnretainedValue().set_tunnel_peer_ip(ip: { let val = ip; if val != nil { return RustString(ptr: val!) } else { return nil } }())
 }
 
+@_used
 @_cdecl("__swift_bridge__$MmConnectionConfig$set_tunnel_peer_subnet_mask")
 func __swift_bridge__MmConnectionConfig_set_tunnel_peer_subnet_mask (_ this: UnsafeMutableRawPointer, _ mask: UnsafeMutableRawPointer?) {
     Unmanaged<MmConnectionConfig>.fromOpaque(this).takeUnretainedValue().set_tunnel_peer_subnet_mask(mask: { let val = mask; if val != nil { return RustString(ptr: val!) } else { return nil } }())
 }
 
+@_used
 @_cdecl("__swift_bridge__$MmConnectionConfig$set_tunnel_peer_reachable")
 func __swift_bridge__MmConnectionConfig_set_tunnel_peer_reachable (_ this: UnsafeMutableRawPointer, _ reachable: Bool) {
     Unmanaged<MmConnectionConfig>.fromOpaque(this).takeUnretainedValue().set_tunnel_peer_reachable(reachable: reachable)
 }
 
+@_used
 @_cdecl("__swift_bridge__$MmConnectionConfig$set_tunnel_iface_subnet_mask")
 func __swift_bridge__MmConnectionConfig_set_tunnel_iface_subnet_mask (_ this: UnsafeMutableRawPointer, _ mask: UnsafeMutableRawPointer?) {
     Unmanaged<MmConnectionConfig>.fromOpaque(this).takeUnretainedValue().set_tunnel_iface_subnet_mask(mask: { let val = mask; if val != nil { return RustString(ptr: val!) } else { return nil } }())
 }
 
+@_used
 @_cdecl("__swift_bridge__$MmConnectionConfig$set_remote_reachable")
 func __swift_bridge__MmConnectionConfig_set_remote_reachable (_ this: UnsafeMutableRawPointer, _ reachable: Bool) {
     Unmanaged<MmConnectionConfig>.fromOpaque(this).takeUnretainedValue().set_remote_reachable(reachable: reachable)
 }
 
+@_used
 @_cdecl("__swift_bridge__$MmConnectionConfig$set_override_tunnel_peer_reachable")
 func __swift_bridge__MmConnectionConfig_set_override_tunnel_peer_reachable (_ this: UnsafeMutableRawPointer, _ reachable: Bool) {
     Unmanaged<MmConnectionConfig>.fromOpaque(this).takeUnretainedValue().set_override_tunnel_peer_reachable(reachable: reachable)
 }
 
+@_used
 @_cdecl("__swift_bridge__$MmConnectionConfig$get_connection_mode")
 func __swift_bridge__MmConnectionConfig_get_connection_mode (_ this: UnsafeMutableRawPointer) -> __swift_bridge__$MmConnectionMode {
     Unmanaged<MmConnectionConfig>.fromOpaque(this).takeUnretainedValue().get_connection_mode().intoFfiRepr()
 }
 
+@_used
 @_cdecl("__swift_bridge__$MmConnectionConfig$get_override_tunnel_peer_ip")
 func __swift_bridge__MmConnectionConfig_get_override_tunnel_peer_ip (_ this: UnsafeMutableRawPointer) -> UnsafeMutableRawPointer {
     { let rustString = Unmanaged<MmConnectionConfig>.fromOpaque(this).takeUnretainedValue().get_override_tunnel_peer_ip().intoRustString(); rustString.isOwned = false; return rustString.ptr }()
 }
 
+@_used
 @_cdecl("__swift_bridge__$MmConnectionConfig$get_remote_server_ip")
 func __swift_bridge__MmConnectionConfig_get_remote_server_ip (_ this: UnsafeMutableRawPointer) -> UnsafeMutableRawPointer {
     { let rustString = Unmanaged<MmConnectionConfig>.fromOpaque(this).takeUnretainedValue().get_remote_server_ip().intoRustString(); rustString.isOwned = false; return rustString.ptr }()
 }
 
+@_used
 @_cdecl("__swift_bridge__$MmConnectionConfig$request_service_port")
 func __swift_bridge__MmConnectionConfig_request_service_port (_ this: UnsafeMutableRawPointer, _ request_id: UInt64, _ pairing_protocol: __swift_bridge__$MmPairingProtocol, _ port: UInt16) {
     Unmanaged<MmConnectionConfig>.fromOpaque(this).takeUnretainedValue().request_service_port(request_id: request_id, pairing_protocol: pairing_protocol.intoSwiftRepr(), port: port)
 }
 
+@_used
 @_cdecl("__swift_bridge__$MmWirelessPairSink$on_pin_received")
 func __swift_bridge__MmWirelessPairSink_on_pin_received (_ this: UnsafeMutableRawPointer, _ pin: UnsafeMutableRawPointer) {
     Unmanaged<MmWirelessPairSink>.fromOpaque(this).takeUnretainedValue().on_pin_received(pin: RustString(ptr: pin))
 }
 
+@_used
 @_cdecl("__swift_bridge__$MmWirelessPairSink$on_ready_to_pair")
 func __swift_bridge__MmWirelessPairSink_on_ready_to_pair (_ this: UnsafeMutableRawPointer, _ service_id: UnsafeMutableRawPointer, _ port: Int32) {
     Unmanaged<MmWirelessPairSink>.fromOpaque(this).takeUnretainedValue().on_ready_to_pair(service_id: RustString(ptr: service_id), port: port)
 }
 
+@_used
 @_cdecl("__swift_bridge__$MmWirelessPairSink$request_pin")
 func __swift_bridge__MmWirelessPairSink_request_pin (_ this: UnsafeMutableRawPointer, _ request_id: UInt64) -> Bool {
     Unmanaged<MmWirelessPairSink>.fromOpaque(this).takeUnretainedValue().request_pin(request_id: request_id)
 }
 
+@_used
 @_cdecl("__swift_bridge__$MmWirelessPairSink$resolve_file_name")
 func __swift_bridge__MmWirelessPairSink_resolve_file_name (_ this: UnsafeMutableRawPointer, _ name: UnsafeMutableRawPointer, _ model: UnsafeMutableRawPointer) -> __swift_bridge__$MmResolveOutcome {
     Unmanaged<MmWirelessPairSink>.fromOpaque(this).takeUnretainedValue().resolve_file_name(name: RustString(ptr: name), model: RustString(ptr: model)).intoFfiRepr()
@@ -2179,18 +2196,21 @@ extension MmCoreStatus: Vectorizable {
     }
 }
 
+@_used
 @_cdecl("__swift_bridge__$MmWirelessPairSink$_free")
 func __swift_bridge__MmWirelessPairSink__free (ptr: UnsafeMutableRawPointer) {
     let _ = Unmanaged<MmWirelessPairSink>.fromOpaque(ptr).takeRetainedValue()
 }
 
 
+@_used
 @_cdecl("__swift_bridge__$MmConnectionConfig$_free")
 func __swift_bridge__MmConnectionConfig__free (ptr: UnsafeMutableRawPointer) {
     let _ = Unmanaged<MmConnectionConfig>.fromOpaque(ptr).takeRetainedValue()
 }
 
 
+@_used
 @_cdecl("__swift_bridge__$MmEventSink$_free")
 func __swift_bridge__MmEventSink__free (ptr: UnsafeMutableRawPointer) {
     let _ = Unmanaged<MmEventSink>.fromOpaque(ptr).takeRetainedValue()
