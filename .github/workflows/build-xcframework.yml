@@ -41,13 +41,13 @@ jobs:
       # device over USB/Wi-Fi; they cannot run on a CI host and never
       # ran in this repo's CI.
       - name: Cargo test (new crates)
-        run: cargo test -p mm-common -p mm-ffi
+        run: cargo test -p mm-common -p mm-net -p mm-ffi
 
       - name: Cargo check (whole workspace, legacy crate included)
         run: cargo check --workspace
 
       - name: Cargo check (iOS device target)
-        run: cargo check -p mm-common -p mm-ffi --target aarch64-apple-ios
+        run: cargo check -p mm-common -p mm-net -p mm-ffi --target aarch64-apple-ios
 
   xcframework:
     name: Build MinimuxerRust.xcframework

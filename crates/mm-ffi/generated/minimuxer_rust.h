@@ -18,6 +18,25 @@ void* __swift_bridge__$Vec_MmPairingProtocol$as_ptr(void* vec_ptr);
 
 typedef struct __swift_bridge__$MmPairingOutcome { bool success; struct __swift_bridge__$MmPairingProtocol protocol; struct __swift_bridge__$MmErrorInfo error; } __swift_bridge__$MmPairingOutcome;
 typedef struct __swift_bridge__$Option$MmPairingOutcome { bool is_some; __swift_bridge__$MmPairingOutcome val; } __swift_bridge__$Option$MmPairingOutcome;
+typedef enum __swift_bridge__$MmConnectionModeTag { __swift_bridge__$MmConnectionMode$LocalVpn, __swift_bridge__$MmConnectionMode$RemoteServer, __swift_bridge__$MmConnectionMode$NotConfigured, } __swift_bridge__$MmConnectionModeTag;
+typedef struct __swift_bridge__$MmConnectionMode { __swift_bridge__$MmConnectionModeTag tag; } __swift_bridge__$MmConnectionMode;
+typedef struct __swift_bridge__$Option$MmConnectionMode { bool is_some; __swift_bridge__$MmConnectionMode val; } __swift_bridge__$Option$MmConnectionMode;
+
+void* __swift_bridge__$Vec_MmConnectionMode$new(void);
+void __swift_bridge__$Vec_MmConnectionMode$drop(void* vec_ptr);
+void __swift_bridge__$Vec_MmConnectionMode$push(void* vec_ptr, __swift_bridge__$MmConnectionMode item);
+__swift_bridge__$Option$MmConnectionMode __swift_bridge__$Vec_MmConnectionMode$pop(void* vec_ptr);
+__swift_bridge__$Option$MmConnectionMode __swift_bridge__$Vec_MmConnectionMode$get(void* vec_ptr, uintptr_t index);
+__swift_bridge__$Option$MmConnectionMode __swift_bridge__$Vec_MmConnectionMode$get_mut(void* vec_ptr, uintptr_t index);
+uintptr_t __swift_bridge__$Vec_MmConnectionMode$len(void* vec_ptr);
+void* __swift_bridge__$Vec_MmConnectionMode$as_ptr(void* vec_ptr);
+
+typedef struct __swift_bridge__$MmInterfaceInfo { void* name; void* ip; void* ipv6; void* subnet; void* interface_type; bool is_vpn; } __swift_bridge__$MmInterfaceInfo;
+typedef struct __swift_bridge__$Option$MmInterfaceInfo { bool is_some; __swift_bridge__$MmInterfaceInfo val; } __swift_bridge__$Option$MmInterfaceInfo;
+typedef struct __swift_bridge__$MmNetSnapshot { void* interfaces; bool wifi_satisfied; bool wired_satisfied; bool usb_satisfied; bool bridge_satisfied; bool utun_available; bool ipsec_available; } __swift_bridge__$MmNetSnapshot;
+typedef struct __swift_bridge__$Option$MmNetSnapshot { bool is_some; __swift_bridge__$MmNetSnapshot val; } __swift_bridge__$Option$MmNetSnapshot;
+typedef struct __swift_bridge__$MmEndpointOutcome { bool success; void* ip; struct __swift_bridge__$MmErrorInfo error; } __swift_bridge__$MmEndpointOutcome;
+typedef struct __swift_bridge__$Option$MmEndpointOutcome { bool is_some; __swift_bridge__$MmEndpointOutcome val; } __swift_bridge__$Option$MmEndpointOutcome;
 void* __swift_bridge__$mm_version(void);
 struct __swift_bridge__$MmPairingOutcome __swift_bridge__$mm_parse_pairing_file(void* content, struct __swift_bridge__$Option$MmPairingProtocol preferred);
 void* __swift_bridge__$mm_describe_error(struct __swift_bridge__$MmErrorInfo info);
@@ -27,5 +46,17 @@ void __swift_bridge__$mm_register_event_sink(void* sink);
 void __swift_bridge__$mm_clear_event_sink(void);
 void __swift_bridge__$mm_emit_log(void* message);
 void __swift_bridge__$mm_emit_status(bool success, void* domain, void* code, void* reason);
+void* __swift_bridge__$mm_net_scan_interfaces(void);
+struct __swift_bridge__$MmNetSnapshot __swift_bridge__$mm_net_snapshot(void);
+struct __swift_bridge__$MmEndpointOutcome __swift_bridge__$mm_net_endpoint(void);
+struct __swift_bridge__$MmConnectionMode __swift_bridge__$mm_net_connection_mode(void);
+void __swift_bridge__$mm_net_refresh(void* callback_wrapper, void __swift_bridge__$mm_net_refresh$async(void* callback_wrapper, bool ret));
+bool __swift_bridge__$mm_net_observer_start(void);
+bool __swift_bridge__$mm_net_observer_stop(void);
+void __swift_bridge__$mm_net_bind_connection_config(void* config);
+void __swift_bridge__$mm_net_clear_connection_config(void);
+void __swift_bridge__$mm_net_set_probe_timeout(int32_t timeout_ms);
+void __swift_bridge__$mm_net_set_pairing_protocol(struct __swift_bridge__$MmPairingProtocol protocol);
+bool __swift_bridge__$mm_net_complete_service_port(uint64_t request_id, struct __swift_bridge__$MmPairingProtocol protocol, uint16_t port);
 
 
