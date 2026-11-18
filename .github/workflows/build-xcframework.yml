@@ -166,22 +166,12 @@ jobs:
           ls mmx/MinimuxerRust.xcframework/ios-arm64/Headers/minimuxer_rust/
       - name: Typecheck isolated references
         run: |
-          INC=/tmp/mmx/MinimuxerRust.xcframework/ios-arm64/Headers
-          cat > /tmp/shapes.h << 'HDR'
-          #include "minimuxer_rust/minimuxer_rust.h"
-          #include "minimuxer_rust/SwiftBridgeCore.h"
-          void diag_f1(struct __swift_bridge__$Option$MmGatewayBackend b);
-          void diag_f2(struct __private__OptionU16 p);
-          void diag_f3(struct __private__OptionI32 p);
-          void diag_f4(struct __swift_bridge__$Option$MmGatewayBackend b, struct __private__OptionU16 p, struct __private__OptionI32 t);
-          void diag_f5(struct __swift_bridge__$Option$MmPairingProtocol p);
-          void diag_f6(struct __private__OptionU16 p, struct __private__OptionI32 t);
-          HDR
-          mkdir -p /tmp/shapemod/diagshapes
-          cp /tmp/shapes.h /tmp/shapemod/diagshapes/shapes.h
-          printf 'module diagshapes {\n\theader "shapes.h"\n\texport *\n}\n' > /tmp/shapemod/diagshapes/module.modulemap
-          for f in f1 f2 f3 f4 f5 f6; do
-            printf 'import minimuxer_rust\nimport diagshapes\nlet x = diag_%s\n' "$f" > /tmp/ts.swift
-            echo "=== diag_$f:"
-            xcrun swiftc -typecheck -I "$INC" -I /tmp/shapemod /tmp/ts.swift && echo "DIAG_${f}_OK" || echo "DIAG_${f}_FAIL"
-          done
+          SRC=/tmp/mmx/MinimuxerRust.xcframework/ios-arm64/Headers/minimuxer_rust
+          mkdir -p /tmp/swapped/minimuxer_rust
+          cp "$SRC/minimuxer_rust.h" "$SRC/SwiftBridgeCore.h" /tmp/swapped/minimuxer_rust/
+          printf 'module minimuxer_rust {\n\theader "SwiftBridgeCore.h"\n\theader "minimuxer_rust.h"\n\texport *\n}\n' > /tmp/swapped/minimuxer_rust/module.modulemap
+          printf 'import minimuxer_rust\nlet c = __swift_bridge__$mm_core_set_params\nlet a = __swift_bridge__$mm_core_status\n' > /tmp/t2.swift
+          echo "=== set_params via swapped modulemap:"
+          xcrun swiftc -typecheck -I /tmp/swapped /tmp/t2.swift && echo SWAPPED_OK || echo SWAPPED_FAIL
+          echo "=== control via original modulemap:"
+          xcrun swiftc -typecheck -I /tmp/mmx/MinimuxerRust.xcframework/ios-arm64/Headers /tmp/t2.swift && echo ORIG_OK || echo ORIG_FAIL
