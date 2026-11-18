@@ -18,3 +18,14 @@ module.modulemap*
 # mm-ffi generated Swift bindings ARE checked in: the SideStore build
 # consumes them (plus the xcframework) with no Rust toolchain present.
 !/crates/mm-ffi/generated/**
+
+# Swift shell package (DESIGN D2): the rewrite makes this repo the
+# shell package itself, so its Swift sources and manifests are
+# checked in. (The blanket *.swift / *.h ignores above are legacy
+# from the original crate layout and still cover its files.)
+!/Package.swift
+!/Common/**
+!/DeviceGateway/**
+!/Shell/**
+!/Scripts/**
+**/__pycache__/

@@ -546,7 +546,7 @@ fn mm_emit_status(success: bool, domain: String, code: String, reason: String) {
 
 fn mm_version() -> String {
     format!(
-        "minimuxer-rust rewrite skeleton (mm-ffi {}, mm-common {})",
+        "minimuxer-rust {} (mm-ffi {}; error-map {} cases)",
         env!("CARGO_PKG_VERSION"),
         mm_common::ERROR_CASES.len()
     )

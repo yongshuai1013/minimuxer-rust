@@ -16,6 +16,11 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/build-xcframework.yml'
+      - 'Scripts/**'
+      - 'Package.swift'
+      - 'Common/**'
+      - 'DeviceGateway/**'
+      - 'Shell/**'
 
 jobs:
   test:
@@ -57,6 +62,12 @@ jobs:
 
       - name: Cargo check (iOS device target, libimobiledevice backend)
         run: cargo check -p mm-ffi --features limd --target aarch64-apple-ios
+
+      # The Swift shell's error conversion tables are generated from
+      # crates/mm-common/error-map.toml (single source of truth);
+      # fail if the checked-in tables drift from it.
+      - name: Error table drift check (shell)
+        run: python3 Scripts/generate-error-table.py --check
 
   xcframework:
     name: Build MinimuxerRust.xcframework
