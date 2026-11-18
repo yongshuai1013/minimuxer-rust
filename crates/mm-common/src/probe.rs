@@ -79,14 +79,11 @@ unsafe fn set_nonblocking(fd: libc::c_int) {
     libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
 }
 
-unsafe fn test_tcp_v4(ip: &str, port: u16, timeout_ms: i32) -> bool {
-    let mut addr: libc::sockaddr_in = std::mem::zeroed();
+fn sockaddr_v4(ip: &str, port: u16) -> Option<libc::sockaddr_in> {
+    let mut addr: libc::sockaddr_in = unsafe { std::mem::zeroed() };
     // The libc crate does not export inet_pton; std's parser is used
     // instead (same strict dotted-quad acceptance as inet_pton).
-    let parsed: std::net::Ipv4Addr = match ip.parse() {
-        Ok(a) => a,
-        Err(_) => return false,
-    };
+    let parsed: std::net::Ipv4Addr = ip.parse().ok()?;
     addr.sin_addr = libc::in_addr {
         s_addr: u32::from(parsed).to_be(),
     };
@@ -102,6 +99,14 @@ unsafe fn test_tcp_v4(ip: &str, port: u16, timeout_ms: i32) -> bool {
     }
     addr.sin_family = libc::AF_INET as libc::sa_family_t;
     addr.sin_port = port.to_be();
+    Some(addr)
+}
+
+unsafe fn test_tcp_v4(ip: &str, port: u16, timeout_ms: i32) -> bool {
+    let addr = match sockaddr_v4(ip, port) {
+        Some(a) => a,
+        None => return false,
+    };
 
     let fd = libc::socket(libc::AF_INET, libc::SOCK_STREAM, 0);
     if fd < 0 {
@@ -117,8 +122,8 @@ unsafe fn test_tcp_v4(ip: &str, port: u16, timeout_ms: i32) -> bool {
     poll_connect(fd, timeout_ms)
 }
 
-unsafe fn test_tcp_v6(ip: &str, port: u16, timeout_ms: i32) -> bool {
-    let mut addr: libc::sockaddr_in6 = std::mem::zeroed();
+fn sockaddr_v6(ip: &str, port: u16) -> Option<libc::sockaddr_in6> {
+    let mut addr: libc::sockaddr_in6 = unsafe { std::mem::zeroed() };
     let (clean_ip, scope_id) = match ip.split_once('%') {
         Some((clean, iface)) => (clean.to_string(), if_index(iface)),
         None => {
@@ -143,7 +148,7 @@ unsafe fn test_tcp_v6(ip: &str, port: u16, timeout_ms: i32) -> bool {
     addr.sin6_scope_id = scope_id;
     let parsed: std::net::Ipv6Addr = match clean_ip.parse() {
         Ok(a) => a,
-        Err(_) => return false,
+        Err(_) => return None,
     };
     addr.sin6_addr = libc::in6_addr {
         s6_addr: parsed.octets(),
@@ -160,6 +165,14 @@ unsafe fn test_tcp_v6(ip: &str, port: u16, timeout_ms: i32) -> bool {
     }
     addr.sin6_family = libc::AF_INET6 as libc::sa_family_t;
     addr.sin6_port = port.to_be();
+    Some(addr)
+}
+
+unsafe fn test_tcp_v6(ip: &str, port: u16, timeout_ms: i32) -> bool {
+    let addr = match sockaddr_v6(ip, port) {
+        Some(a) => a,
+        None => return false,
+    };
 
     let fd = libc::socket(libc::AF_INET6, libc::SOCK_STREAM, 0);
     if fd < 0 {
@@ -173,4 +186,110 @@ unsafe fn test_tcp_v6(ip: &str, port: u16, timeout_ms: i32) -> bool {
         std::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t,
     );
     poll_connect(fd, timeout_ms)
+}
+
+// ---------------------------------------------------------------------------
+// Outcome probe (M6): the three-way result EMProxy's `probeHost`
+// needs. Swift's NWConnection state machine collapses to, in BSD
+// terms: SO_ERROR == 0 → Connected (.ready); SO_ERROR ==
+// ECONNREFUSED → Refused (.waiting with POSIX 61, which Swift
+// counts as success: the tunnel routes, nothing listens yet);
+// anything else, including timeout → Failed (.failed/.cancelled
+// or the per-attempt cap). See docs/m6-emproxy-behavior.md B4 and
+// diff item D-M6-4 for the `.waiting(other)` collapse.
+// ---------------------------------------------------------------------------
+
+/// Three-way result of [`probe_tcp_outcome`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TcpProbeOutcome {
+    /// The connection completed (SO_ERROR == 0).
+    Connected,
+    /// The peer actively refused (SO_ERROR == ECONNREFUSED).
+    Refused,
+    /// Any other error, an invalid address, or a timeout.
+    Failed,
+}
+
+/// Non-blocking connect + poll, reporting the SO_ERROR outcome.
+/// Same address acceptance rules as [`test_tcp`] (empty and CIDR
+/// forms rejected, IPv6 `%scope` honored).
+pub fn probe_tcp_outcome(ip: &str, port: u16, timeout_ms: i32) -> TcpProbeOutcome {
+    if ip.is_empty() || ip.contains('/') {
+        return TcpProbeOutcome::Failed;
+    }
+    unsafe {
+        if ip.contains(':') {
+            let addr = match sockaddr_v6(ip, port) {
+                Some(a) => a,
+                None => return TcpProbeOutcome::Failed,
+            };
+            outcome_connect(
+                libc::AF_INET6,
+                &addr as *const libc::sockaddr_in6 as *const libc::sockaddr,
+                std::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t,
+                timeout_ms,
+            )
+        } else {
+            let addr = match sockaddr_v4(ip, port) {
+                Some(a) => a,
+                None => return TcpProbeOutcome::Failed,
+            };
+            outcome_connect(
+                libc::AF_INET,
+                &addr as *const libc::sockaddr_in as *const libc::sockaddr,
+                std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
+                timeout_ms,
+            )
+        }
+    }
+}
+
+unsafe fn outcome_connect(
+    family: libc::c_int,
+    addr: *const libc::sockaddr,
+    len: libc::socklen_t,
+    timeout_ms: i32,
+) -> TcpProbeOutcome {
+    let fd = libc::socket(family, libc::SOCK_STREAM, 0);
+    if fd < 0 {
+        return TcpProbeOutcome::Failed;
+    }
+    let _guard = FdGuard(fd);
+    set_nonblocking(fd);
+    let rc = libc::connect(fd, addr, len);
+    if rc == 0 {
+        return TcpProbeOutcome::Connected;
+    }
+    let err = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+    if err == libc::ECONNREFUSED {
+        return TcpProbeOutcome::Refused;
+    }
+    if err != libc::EINPROGRESS {
+        return TcpProbeOutcome::Failed;
+    }
+    let mut pfd = libc::pollfd {
+        fd,
+        events: (libc::POLLOUT | libc::POLLERR | libc::POLLHUP) as libc::c_short,
+        revents: 0,
+    };
+    let result = libc::poll(&mut pfd, 1, timeout_ms);
+    if result <= 0 {
+        return TcpProbeOutcome::Failed;
+    }
+    let mut sock_err: libc::c_int = 0;
+    let mut opt_len = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
+    libc::getsockopt(
+        fd,
+        libc::SOL_SOCKET,
+        libc::SO_ERROR,
+        &mut sock_err as *mut libc::c_int as *mut libc::c_void,
+        &mut opt_len,
+    );
+    if sock_err == 0 {
+        TcpProbeOutcome::Connected
+    } else if sock_err == libc::ECONNREFUSED {
+        TcpProbeOutcome::Refused
+    } else {
+        TcpProbeOutcome::Failed
+    }
 }
