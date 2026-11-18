@@ -33,6 +33,8 @@ pub mod gw_idevice_rp;
 pub mod gw_limd;
 #[cfg(feature = "limd")]
 pub mod gw_limd_ops;
+#[cfg(feature = "limd")]
+pub mod gw_limd_rp;
 pub mod rawconn;
 pub mod rsp;
 pub mod rsd_afc;

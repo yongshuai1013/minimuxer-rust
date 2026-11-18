@@ -27,7 +27,7 @@ use idevice::provider::IdeviceProvider as _;
 use rusty_libimobiledevice::error::{IdeviceError as LimdIdeviceError, LockdowndError};
 
 use crate::base::GatewayCore;
-use crate::gateway::{gw_error, unsupported, DeviceGateway, GatewayBackend, GatewayFuture, OpenedService};
+use crate::gateway::{gw_error, DeviceGateway, GatewayBackend, GatewayFuture, OpenedService};
 
 /// Swift `LibimobiledeviceGateway` (`requiresUsbmuxd = true`).
 pub struct LibimobiledeviceGateway {
@@ -36,6 +36,26 @@ pub struct LibimobiledeviceGateway {
     /// refreshed by successful live UDID queries, and part of this
     /// backend's `verifyInitialized` condition.
     cached_udid: Mutex<Option<String>>,
+    /// The loaded RemotePairing identity (M7; Swift's
+    /// `rpIdentity`).
+    rp_identity: Mutex<Option<mm_rp::RpIdentity>>,
+    /// Swift's `activeTunnel`/`activeRsd` pair, as one cached
+    /// mm-rp session (Swift `cleanupRPTunnel` = dropping it).
+    rp_session: Mutex<Option<RpSessionSlot>>,
+    /// Open RSD service streams by service identifier.
+    rp_services: Mutex<std::collections::HashMap<String, RpServiceSlot>>,
+}
+
+struct RpSessionSlot {
+    session: crate::gw_idevice_rp::RpSessionHandle,
+    generation: u64,
+}
+
+struct RpServiceSlot {
+    #[allow(dead_code)]
+    stream: mm_rp::RpStream,
+    #[allow(dead_code)]
+    generation: u64,
 }
 
 impl Default for LibimobiledeviceGateway {
@@ -49,12 +69,18 @@ impl LibimobiledeviceGateway {
         Self {
             core: GatewayCore::new(),
             cached_udid: Mutex::new(None),
+            rp_identity: Mutex::new(None),
+            rp_session: Mutex::new(None),
+            rp_services: Mutex::new(std::collections::HashMap::new()),
         }
     }
 
     fn cleanup(&self) {
         debug_log("[LibimobiledeviceGateway] cleanup() called");
         *self.cached_udid.lock().unwrap() = None;
+        *self.rp_identity.lock().unwrap() = None;
+        *self.rp_session.lock().unwrap() = None;
+        self.rp_services.lock().unwrap().clear();
         self.core.cleanup();
     }
 
@@ -66,6 +92,93 @@ impl LibimobiledeviceGateway {
             (true, Some(udid)) => Ok(udid),
             _ => Err(gw_error(DeviceGatewayCode::NotInitialized, "")),
         }
+    }
+
+    // -- M7: RemotePairing session management ----------------
+
+    /// The RP-mode verification (diff list D-M7-1): Swift's
+    /// `verifyInitialized` can never pass in RP mode (its
+    /// cachedUDID is unset there and the only writer is
+    /// itself gated) — the port verifies the RP preconditions
+    /// directly: initialized, with an identity loaded.
+    fn verify_initialized_rp(&self) -> Result<mm_rp::RpIdentity, MmErrorInfo> {
+        let identity = self.rp_identity.lock().unwrap().clone();
+        match (self.core.is_initialized(), identity) {
+            (true, Some(identity)) => Ok(identity),
+            _ => Err(gw_error(DeviceGatewayCode::NotInitialized, "")),
+        }
+    }
+
+    fn is_rp_mode(&self) -> bool {
+        self.core.pairing_file_type() == PairingProtocol::RpPairing
+    }
+
+    /// Swift `withRPTunnel` + `getActiveRSD`: the cached
+    /// session while the core generation is unchanged,
+    /// otherwise a fresh establishment (whose pair-verify
+    /// client is created inside the establishment and dropped
+    /// with it — Swift `withRPClient`'s per-call freshness).
+    async fn rp_session(
+        &self,
+    ) -> Result<crate::gw_idevice_rp::RpSessionHandle, MmErrorInfo> {
+        let generation = self.core.generation();
+        {
+            let slot = self.rp_session.lock().unwrap();
+            if let Some(slot) = slot.as_ref() {
+                if slot.generation == generation {
+                    return Ok(slot.session.clone());
+                }
+            }
+        }
+        let identity = self.verify_initialized_rp()?;
+        let endpoint = self
+            .core
+            .device_endpoint_ip()
+            .filter(|ip| !ip.is_empty())
+            .ok_or_else(|| {
+                gw_error(DeviceGatewayCode::DeviceEndpointIpNotAvailable, "")
+            })?;
+        let port = self.core.get_port(PairingProtocol::RpPairing);
+        let session = mm_rp::RpSession::establish(&endpoint, port, APP_NAME, &identity)
+            .await
+            .map_err(|e| match e.stage {
+                "pair_verify" => gw_error(
+                    DeviceGatewayCode::ConnectionFailed,
+                    format!("rppairing_pair_verify failed: {}", e.message),
+                ),
+                "create_tunnel_listener" => gw_error(
+                    DeviceGatewayCode::ConnectionFailed,
+                    format!(
+                        "rppairing_create_tunnel_listener failed: {}",
+                        e.message
+                    ),
+                ),
+                "tunnel_connect" => gw_error(
+                    DeviceGatewayCode::ConnectionFailed,
+                    format!("rppairing_tunnel_connect failed: {}", e.message),
+                ),
+                "rsd_connect" => gw_error(
+                    DeviceGatewayCode::ConnectionFailed,
+                    format!("Failed to connect to RSD: {}", e.message),
+                ),
+                _ => gw_error(
+                    DeviceGatewayCode::ConnectionFailed,
+                    format!("Failed to establish RemotePairing tunnel: {}", e.message),
+                ),
+            })?;
+        let handle: crate::gw_idevice_rp::RpSessionHandle =
+            std::sync::Arc::new(tokio::sync::Mutex::new(session));
+        *self.rp_session.lock().unwrap() = Some(RpSessionSlot {
+            session: handle.clone(),
+            generation,
+        });
+        Ok(handle)
+    }
+
+    /// Swift `cleanupRPTunnel` (via `invalidateConnection`).
+    fn invalidate_rp_session(&self) {
+        *self.rp_session.lock().unwrap() = None;
+        self.rp_services.lock().unwrap().clear();
     }
 }
 
@@ -285,8 +398,9 @@ impl DeviceGateway for LibimobiledeviceGateway {
 
     fn set_logging(&self, enabled: bool) {
         self.core.set_logging(enabled);
-        // Swift also sets the RP logger level; the RP half has no
-        // equivalent until M7.
+        // Swift also sets the RP logger level; the RP stack
+        // logs through the `log` facade, whose level is a host
+        // concern (same disposition as gw-idevice, D-9).
         rusty_libimobiledevice::idevice::set_debug(enabled);
     }
 
@@ -315,9 +429,20 @@ impl DeviceGateway for LibimobiledeviceGateway {
                     *self.cached_udid.lock().unwrap() = Some(lockdown.udid.clone());
                 }
                 mm_common::PairingFile::Rp(_) => {
-                    // Diff list D-2: the RP identity object
-                    // (RemotePairingKit) is an M7 concern; M3 stores
-                    // the parsed state only.
+                    // M7: load the RP identity (Swift's
+                    // `rppairing_identity_from_plist` at start).
+                    let identity = mm_rp::RpIdentity::load(parsed.raw_data())
+                        .map_err(|e| {
+                            debug_log(&format!(
+                                "[LibimobiledeviceGateway] start() rppairing_identity_from_plist failed: {}",
+                                e.message
+                            ));
+                            gw_error(
+                                DeviceGatewayCode::InvalidPairingFile,
+                                "rppairing_identity_from_plist failed",
+                            )
+                        })?;
+                    *self.rp_identity.lock().unwrap() = Some(identity);
                 }
             }
             self.core.set_initialized(true);
@@ -334,6 +459,31 @@ impl DeviceGateway for LibimobiledeviceGateway {
 
     fn fetch_udid<'a>(&'a self) -> GatewayFuture<'a, String> {
         Box::pin(async move {
+            if self.is_rp_mode() {
+                // Swift (RP branch): live GetValue first,
+                // cached UDID on failure or empty.
+                self.verify_initialized_rp()?;
+                let session = self.rp_session().await?;
+                let live =
+                    crate::gw_limd_rp::get_lockdown_value(&session, "UniqueDeviceID")
+                        .await;
+                return match live {
+                    Ok(value) if !value.is_empty() => {
+                        *self.cached_udid.lock().unwrap() = Some(value.clone());
+                        Ok(value)
+                    }
+                    _ => {
+                        let cached = self.cached_udid.lock().unwrap().clone();
+                        match cached {
+                            Some(cached) if !cached.is_empty() => Ok(cached),
+                            _ => Err(gw_error(
+                                DeviceGatewayCode::ServiceError,
+                                "UniqueDeviceID not found on device",
+                            )),
+                        }
+                    }
+                };
+            }
             let udid = self.verify_initialized()?;
             // Swift: try the live query first; on failure *or* an
             // empty value, fall back to the cached UDID.
@@ -368,9 +518,10 @@ impl DeviceGateway for LibimobiledeviceGateway {
 
     fn get_lockdown_value<'a>(&'a self, key: &'a str) -> GatewayFuture<'a, String> {
         Box::pin(async move {
-            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
-                self.verify_initialized()?;
-                return Err(unsupported("getLockdownValue"));
+            if self.is_rp_mode() {
+                self.verify_initialized_rp()?;
+                let session = self.rp_session().await?;
+                return crate::gw_limd_rp::get_lockdown_value(&session, key).await;
             }
             let udid = self.verify_initialized()?;
             let key = key.to_string();
@@ -387,10 +538,13 @@ impl DeviceGateway for LibimobiledeviceGateway {
 
     fn start_session<'a>(&'a self) -> GatewayFuture<'a, ()> {
         Box::pin(async move {
-            let udid = self.verify_initialized()?;
-            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
-                return Err(unsupported("startSession"));
+            if self.is_rp_mode() {
+                // RP analog: establishing the tunnel + RSD
+                // session is the proof on this route.
+                self.verify_initialized_rp()?;
+                return self.rp_session().await.map(|_| ());
             }
+            let udid = self.verify_initialized()?;
             // The handshake client *is* the session on this backend;
             // prove it with the UDID query Swift's client performs
             // implicitly, then drop it (Swift caches no lockdown
@@ -419,17 +573,23 @@ impl DeviceGateway for LibimobiledeviceGateway {
     }
 
     fn stop_session<'a>(&'a self) -> GatewayFuture<'a, ()> {
-        // No cached session exists on this backend (see above).
-        Box::pin(async move { Ok(()) })
+        // No cached lockdown session exists on this backend
+        // (see above); the RP session cache is dropped.
+        Box::pin(async move {
+            self.invalidate_rp_session();
+            Ok(())
+        })
     }
 
     fn perform_heartbeat<'a>(&'a self, interval: u64) -> GatewayFuture<'a, u64> {
         Box::pin(async move {
-            let udid = self.verify_initialized()?;
-            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
-                // The RSD Pico path is M7 (diff list D-2).
-                return Err(unsupported("performHeartbeat"));
+            if self.is_rp_mode() {
+                self.verify_initialized_rp()?;
+                let session = self.rp_session().await?;
+                return crate::gw_limd_rp::perform_heartbeat(&session, interval)
+                    .await;
             }
+            let udid = self.verify_initialized()?;
             tokio::task::spawn_blocking(move || limd_perform_heartbeat(&udid, interval))
                 .await
                 .map_err(|e| {
@@ -443,10 +603,42 @@ impl DeviceGateway for LibimobiledeviceGateway {
 
     fn open_service<'a>(&'a self, service_name: &'a str) -> GatewayFuture<'a, OpenedService> {
         Box::pin(async move {
-            let udid = self.verify_initialized()?;
-            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
-                return Err(unsupported("openService"));
+            if self.is_rp_mode() {
+                self.verify_initialized_rp()?;
+                let session = self.rp_session().await?;
+                let mut guard = session.lock().await;
+                let port = guard.service_port(service_name).ok_or_else(|| {
+                    gw_error(
+                        DeviceGatewayCode::ServiceError,
+                        format!(
+                            "Failed to connect to {service_name}, error: (RSD service not found)"
+                        ),
+                    )
+                })?;
+                let stream = guard
+                    .open_stream(service_name)
+                    .await
+                    .map_err(|e| {
+                        gw_error(
+                            DeviceGatewayCode::ServiceError,
+                            format!(
+                                "Failed to connect to {service_name}, error: ({})",
+                                e.message
+                            ),
+                        )
+                    })?;
+                let generation = self.core.generation();
+                self.rp_services.lock().unwrap().insert(
+                    service_name.to_string(),
+                    RpServiceSlot { stream, generation },
+                );
+                return Ok(OpenedService {
+                    service_name: service_name.to_string(),
+                    port,
+                    enable_ssl: false,
+                });
             }
+            let udid = self.verify_initialized()?;
             let service_name_owned = service_name.to_string();
             let opened = tokio::task::spawn_blocking(move || {
                 with_lockdown(&udid, |mut client| {
@@ -487,16 +679,20 @@ impl DeviceGateway for LibimobiledeviceGateway {
 
     // ------------------------------------------------------------------
     // M5: DDI mount, install pipeline, profiles, debug
-    // (docs/m5-install-ddi-debug-diff.md §4). RP routes return
-    // unsupported until M7.
+    // (docs/m5-install-ddi-debug-diff.md §4). M7: the RP
+    // routes dispatch to gw_limd_rp through the cached
+    // session; the AFC queries keep the lockdown route only
+    // (D-M7-4).
     // ------------------------------------------------------------------
 
     fn is_ddi_mounted<'a>(&'a self) -> GatewayFuture<'a, bool> {
         Box::pin(async move {
-            let udid = self.verify_initialized()?;
-            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
-                return Err(unsupported("isDDIMounted"));
+            if self.is_rp_mode() {
+                self.verify_initialized_rp()?;
+                let session = self.rp_session().await?;
+                return Ok(crate::gw_limd_rp::is_ddi_mounted(&session).await);
             }
+            let udid = self.verify_initialized()?;
             let mounted = tokio::task::spawn_blocking(move || {
                 crate::gw_limd_ops::is_ddi_mounted(&udid)
             })
@@ -517,10 +713,15 @@ impl DeviceGateway for LibimobiledeviceGateway {
         signature: &'a [u8],
     ) -> GatewayFuture<'a, ()> {
         Box::pin(async move {
-            let udid = self.verify_initialized()?;
-            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
-                return Err(unsupported("mountDeveloperImage"));
+            if self.is_rp_mode() {
+                self.verify_initialized_rp()?;
+                let session = self.rp_session().await?;
+                return crate::gw_limd_rp::mount_developer_image(
+                    &session, image, signature,
+                )
+                .await;
             }
+            let udid = self.verify_initialized()?;
             let image = image.to_vec();
             let signature = signature.to_vec();
             tokio::task::spawn_blocking(move || {
@@ -543,10 +744,18 @@ impl DeviceGateway for LibimobiledeviceGateway {
         build_manifest: &'a [u8],
     ) -> GatewayFuture<'a, ()> {
         Box::pin(async move {
-            let _udid = self.verify_initialized()?;
-            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
-                return Err(unsupported("mountPersonalizedDdi"));
+            if self.is_rp_mode() {
+                self.verify_initialized_rp()?;
+                let session = self.rp_session().await?;
+                return crate::gw_limd_rp::mount_personalized_ddi(
+                    &session,
+                    image,
+                    trustcache,
+                    build_manifest,
+                )
+                .await;
             }
+            let _udid = self.verify_initialized()?;
             // D-M5-7: the wrapper has no
             // mount_image_with_options, so the personalized
             // mount goes through the idevice crate over a
@@ -584,10 +793,12 @@ impl DeviceGateway for LibimobiledeviceGateway {
         profile: &'a [u8],
     ) -> GatewayFuture<'a, ()> {
         Box::pin(async move {
-            let udid = self.verify_initialized()?;
-            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
-                return Err(unsupported("installProvisioningProfile"));
+            if self.is_rp_mode() {
+                self.verify_initialized_rp()?;
+                let session = self.rp_session().await?;
+                return crate::gw_limd_rp::misagent_install(&session, profile).await;
             }
+            let udid = self.verify_initialized()?;
             let profile = profile.to_vec();
             tokio::task::spawn_blocking(move || {
                 crate::gw_limd_ops::install_profile(&udid, &profile)
@@ -607,10 +818,13 @@ impl DeviceGateway for LibimobiledeviceGateway {
         profile_id: &'a str,
     ) -> GatewayFuture<'a, ()> {
         Box::pin(async move {
-            let udid = self.verify_initialized()?;
-            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
-                return Err(unsupported("removeProvisioningProfile"));
+            if self.is_rp_mode() {
+                self.verify_initialized_rp()?;
+                let session = self.rp_session().await?;
+                return crate::gw_limd_rp::misagent_remove(&session, profile_id)
+                    .await;
             }
+            let udid = self.verify_initialized()?;
             let profile_id = profile_id.to_string();
             tokio::task::spawn_blocking(move || {
                 crate::gw_limd_ops::remove_profile(&udid, &profile_id)
@@ -627,10 +841,12 @@ impl DeviceGateway for LibimobiledeviceGateway {
 
     fn dump_profiles<'a>(&'a self, docs_path: &'a str) -> GatewayFuture<'a, String> {
         Box::pin(async move {
-            let udid = self.verify_initialized()?;
-            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
-                return Err(unsupported("dumpProfiles"));
+            if self.is_rp_mode() {
+                self.verify_initialized_rp()?;
+                let session = self.rp_session().await?;
+                return crate::gw_limd_rp::dump_profiles(&session, docs_path).await;
             }
+            let udid = self.verify_initialized()?;
             let docs_path = docs_path.to_string();
             tokio::task::spawn_blocking(move || {
                 crate::gw_limd_ops::dump_profiles_raw(&udid, &docs_path)
@@ -647,10 +863,14 @@ impl DeviceGateway for LibimobiledeviceGateway {
 
     fn remove_app<'a>(&'a self, bundle_id: &'a str) -> GatewayFuture<'a, ()> {
         Box::pin(async move {
-            let udid = self.verify_initialized()?;
-            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
-                return Err(unsupported("removeApp"));
+            if self.is_rp_mode() {
+                self.verify_initialized_rp()?;
+                let session = self.rp_session().await?;
+                // Swift's RP removeApp is `try?` end to end.
+                crate::gw_limd_rp::instproxy_uninstall(&session, bundle_id).await;
+                return Ok(());
             }
+            let udid = self.verify_initialized()?;
             let bundle_id = bundle_id.to_string();
             tokio::task::spawn_blocking(move || {
                 crate::gw_limd_ops::remove_app(&udid, &bundle_id)
@@ -671,10 +891,13 @@ impl DeviceGateway for LibimobiledeviceGateway {
         ipa_bytes: &'a [u8],
     ) -> GatewayFuture<'a, ()> {
         Box::pin(async move {
-            let udid = self.verify_initialized()?;
-            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
-                return Err(unsupported("sendIpaAfc"));
+            if self.is_rp_mode() {
+                self.verify_initialized_rp()?;
+                let session = self.rp_session().await?;
+                return crate::gw_limd_rp::send_ipa_afc(&session, bundle_id, ipa_bytes)
+                    .await;
             }
+            let udid = self.verify_initialized()?;
             let bundle_id = bundle_id.to_string();
             let ipa_bytes = ipa_bytes.to_vec();
             tokio::task::spawn_blocking(move || {
@@ -696,10 +919,17 @@ impl DeviceGateway for LibimobiledeviceGateway {
         app_path: &'a str,
     ) -> GatewayFuture<'a, ()> {
         Box::pin(async move {
-            let udid = self.verify_initialized()?;
-            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
-                return Err(unsupported("sendAppBundleAfc"));
+            if self.is_rp_mode() {
+                self.verify_initialized_rp()?;
+                let session = self.rp_session().await?;
+                return crate::gw_limd_rp::send_app_bundle_afc(
+                    &session,
+                    bundle_id,
+                    std::path::Path::new(app_path),
+                )
+                .await;
             }
+            let udid = self.verify_initialized()?;
             let bundle_id = bundle_id.to_string();
             let app_path = std::path::PathBuf::from(app_path);
             tokio::task::spawn_blocking(move || {
@@ -717,10 +947,14 @@ impl DeviceGateway for LibimobiledeviceGateway {
 
     fn install_ipa<'a>(&'a self, bundle_id: &'a str) -> GatewayFuture<'a, ()> {
         Box::pin(async move {
-            let udid = self.verify_initialized()?;
-            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
-                return Err(unsupported("installIpa"));
+            if self.is_rp_mode() {
+                self.verify_initialized_rp()?;
+                let session = self.rp_session().await?;
+                let package_path = format!("PublicStaging/{bundle_id}.ipa");
+                return crate::gw_limd_rp::instproxy_install(&session, &package_path)
+                    .await;
             }
+            let udid = self.verify_initialized()?;
             let bundle_id = bundle_id.to_string();
             tokio::task::spawn_blocking(move || {
                 crate::gw_limd_ops::install_ipa(&udid, &bundle_id)
@@ -741,10 +975,14 @@ impl DeviceGateway for LibimobiledeviceGateway {
         app_name: &'a str,
     ) -> GatewayFuture<'a, ()> {
         Box::pin(async move {
-            let udid = self.verify_initialized()?;
-            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
-                return Err(unsupported("installAppBundle"));
+            if self.is_rp_mode() {
+                self.verify_initialized_rp()?;
+                let session = self.rp_session().await?;
+                let package_path = format!("PublicStaging/{bundle_id}/{app_name}");
+                return crate::gw_limd_rp::instproxy_install(&session, &package_path)
+                    .await;
             }
+            let udid = self.verify_initialized()?;
             let bundle_id = bundle_id.to_string();
             let app_name = app_name.to_string();
             tokio::task::spawn_blocking(move || {
@@ -762,10 +1000,14 @@ impl DeviceGateway for LibimobiledeviceGateway {
 
     fn wipe_container<'a>(&'a self, bundle_id: &'a str) -> GatewayFuture<'a, ()> {
         Box::pin(async move {
-            let udid = self.verify_initialized()?;
-            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
-                return Err(unsupported("wipeContainer"));
+            if self.is_rp_mode() {
+                self.verify_initialized_rp()?;
+                let session = self.rp_session().await?;
+                // Swift's RP wipeContainer is `try?` end to end.
+                crate::gw_limd_rp::wipe_container(&session, bundle_id).await;
+                return Ok(());
             }
+            let udid = self.verify_initialized()?;
             let bundle_id = bundle_id.to_string();
             tokio::task::spawn_blocking(move || {
                 crate::gw_limd_ops::wipe_container(&udid, &bundle_id)
@@ -782,10 +1024,12 @@ impl DeviceGateway for LibimobiledeviceGateway {
 
     fn debug_app<'a>(&'a self, bundle_id: &'a str) -> GatewayFuture<'a, ()> {
         Box::pin(async move {
-            let udid = self.verify_initialized()?;
-            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
-                return Err(unsupported("debugApp"));
+            if self.is_rp_mode() {
+                self.verify_initialized_rp()?;
+                let session = self.rp_session().await?;
+                return crate::gw_limd_rp::debug_connect_only(&session).await;
             }
+            let udid = self.verify_initialized()?;
             let bundle_id = bundle_id.to_string();
             tokio::task::spawn_blocking(move || {
                 crate::gw_limd_ops::debug_app(&udid, &bundle_id)
@@ -802,10 +1046,12 @@ impl DeviceGateway for LibimobiledeviceGateway {
 
     fn debug_process<'a>(&'a self, pid: u32) -> GatewayFuture<'a, ()> {
         Box::pin(async move {
-            let udid = self.verify_initialized()?;
-            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
-                return Err(unsupported("debugProcess"));
+            if self.is_rp_mode() {
+                self.verify_initialized_rp()?;
+                let session = self.rp_session().await?;
+                return crate::gw_limd_rp::debug_connect_only(&session).await;
             }
+            let udid = self.verify_initialized()?;
             tokio::task::spawn_blocking(move || {
                 crate::gw_limd_ops::debug_process(&udid, pid)
             })
@@ -826,9 +1072,10 @@ impl DeviceGateway for LibimobiledeviceGateway {
     ) -> GatewayFuture<'a, Vec<String>> {
         Box::pin(async move {
             let udid = self.verify_initialized()?;
-            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
-                return Err(unsupported("afcListDirectory"));
-            }
+            // No RP branch (D-M7-4): Swift limd's AFC queries
+            // only have the lockdown route; in RP mode this
+            // backend's verifyInitialized stops the call, as
+            // in Swift.
             // Swift limd ignores the bundle id here (D-M5-11).
             let _ = bundle_id;
             let path = path.to_string();
@@ -852,9 +1099,7 @@ impl DeviceGateway for LibimobiledeviceGateway {
     ) -> GatewayFuture<'a, Vec<u8>> {
         Box::pin(async move {
             let udid = self.verify_initialized()?;
-            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
-                return Err(unsupported("afcReadFile"));
-            }
+            // No RP branch (D-M7-4, see afcListDirectory).
             let _ = bundle_id;
             let path = path.to_string();
             tokio::task::spawn_blocking(move || {
@@ -877,9 +1122,7 @@ impl DeviceGateway for LibimobiledeviceGateway {
     ) -> GatewayFuture<'a, crate::gateway::AfcFileInfo> {
         Box::pin(async move {
             let udid = self.verify_initialized()?;
-            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
-                return Err(unsupported("afcGetFileInfo"));
-            }
+            // No RP branch (D-M7-4, see afcListDirectory).
             let _ = bundle_id;
             let path = path.to_string();
             tokio::task::spawn_blocking(move || {
