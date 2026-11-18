@@ -197,7 +197,7 @@ final class MinimuxerGatewayFacade: DeviceGatewayAPI {
     func afcListDirectory(bundleId: String, path: String) async throws -> [String] {
         let outcome = await mm_core_afc_list_directory(bundleId, path)
         guard outcome.success else { throw mmSwiftError(from: outcome.error) }
-        return outcome.entries.map { $0.toString() }
+        return outcome.entries.map { $0.as_str().toString() }
     }
 
     func afcReadFile(bundleId: String, path: String) async throws -> Data {
