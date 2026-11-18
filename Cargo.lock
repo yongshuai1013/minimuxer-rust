@@ -1459,6 +1459,7 @@ dependencies = [
 name = "mm-core"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "libc",
  "mm-common",
  "mm-emproxy",
@@ -1466,7 +1467,10 @@ dependencies = [
  "mm-net",
  "mm-rp",
  "plist",
+ "reqwest",
+ "serde_json",
  "tokio",
+ "zip",
 ]
 
 [[package]]

@@ -6,17 +6,22 @@
 //! `MinimuxerCore` (Swift `MinimuxerImpl`: lifecycle state
 //! machine, nine-gate isReady, status bus, `runWithChecks`
 //! mapping) and `HeartbeatService` (Swift's, at the 714aafa3
-//! keep-alive behaviour). See `docs/m4-core-diff.md`.
+//! keep-alive behaviour). M5 adds the `Mounter` and the
+//! install/AFC/profile/debug forwards. See
+//! `docs/m4-core-diff.md` and
+//! `docs/m5-install-ddi-debug-diff.md`.
 
 pub mod core;
 pub mod heartbeat;
+pub mod mounter;
 pub mod usbmuxd_proxy;
 
 pub use core::{
     map_gateway_error, run_with_checks, CoreGatewayProvider, CoreStatus,
-    MinimuxerCore, MinimuxerParams, OsVersionProvider, StatusHandler,
-    SystemOsVersion,
+    MinimuxerCore, MinimuxerParams, OsVersionProvider, ProfileDumpMode,
+    StatusHandler, SystemOsVersion,
 };
+pub use mounter::{ImageDownloader, Mounter, ReqwestDownloader};
 pub use heartbeat::{
     clamp_interval, next_unreachable_backoff, pacing_duration, HeartbeatClock,
     HeartbeatDeps, HeartbeatFuture, HeartbeatService, TokioClock,

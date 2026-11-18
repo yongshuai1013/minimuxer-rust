@@ -6,12 +6,11 @@
 //! flows through. Line-by-line behaviour is catalogued in
 //! `docs/m4-core-diff.md`.
 //!
-//! Scope of this milestone (M4): the lifecycle + readiness +
-//! heartbeat composition. The operation forwards whose gateway
-//! counterparts land in M5 (install/AFC/profiles/debug) are not
-//! here yet; `mount_ddi` keeps Swift's mount-task management
-//! with the Mounter body still reporting unsupported (diff list
-//! D-M4-4).
+//! Scope: M4 landed the lifecycle + readiness + heartbeat
+//! composition; M5 lands the operation forwards
+//! (install/AFC/profiles/debug) and the Mounter body behind
+//! `mount_ddi` (diff list `docs/m5-install-ddi-debug-diff.md`,
+//! closing D-M4-4).
 
 use std::future::Future;
 use std::pin::Pin;
@@ -28,6 +27,7 @@ use mm_net::{
 use tokio::task::JoinHandle;
 
 use crate::heartbeat::{HeartbeatDeps, HeartbeatFuture, HeartbeatService, TokioClock};
+use crate::mounter::{ImageDownloader, Mounter, ReqwestDownloader};
 use crate::usbmuxd_proxy::{
     retarget_usbmuxd_address, start_proxy_for_gateway, UsbmuxdProxyServer,
 };
@@ -207,6 +207,13 @@ pub struct MinimuxerParams {
     pub device_probe_timeout: Option<i32>,
 }
 
+/// Swift `ProfileDumpMode` (the facade's dumpProfiles mode).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProfileDumpMode {
+    Raw,
+    Zip,
+}
+
 /// Swift `MinimuxerStatus`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CoreStatus {
@@ -245,6 +252,9 @@ pub struct MinimuxerCore {
     observer: Arc<PollingObserver>,
     proxy: Arc<UsbmuxdProxyServer>,
     heartbeat: Arc<HeartbeatService>,
+    /// The Mounter's download seam (production: reqwest;
+    /// replaceable for tests).
+    downloader: Mutex<Arc<dyn ImageDownloader>>,
     state: Mutex<CoreState>,
     os_version: Arc<dyn OsVersionProvider>,
     /// The facade's stored remote-pairing port (Swift
@@ -279,6 +289,7 @@ impl MinimuxerCore {
             observer,
             proxy,
             heartbeat,
+            downloader: Mutex::new(Arc::new(ReqwestDownloader)),
             state: Mutex::new(CoreState::default()),
             os_version,
             current_rp_port: Mutex::new(REMOTE_PAIRING_PORT),
@@ -730,12 +741,9 @@ impl MinimuxerCore {
         .await
     }
 
-    /// Swift `mountDDI(docsPath:)`. The mount-task management
-    /// (record the docs path, cancel + await the previous task,
-    /// store the new one) is Swift's; the task body is the
-    /// Mounter, which lands in M5 — until then it reports the
-    /// gateway's unsupportedOperation through the usual mapping
-    /// (diff list D-M4-4).
+    /// Swift `mountDDI(docsPath:)`: record the docs path,
+    /// cancel + await the previous mount task, spawn the new
+    /// one (the Mounter flow, M5) and await its result.
     pub async fn mount_ddi(&self, docs_path: &str) -> Result<bool, MinimuxerError> {
         let docs_path = docs_path.to_string();
         self.run_checks(
@@ -749,8 +757,10 @@ impl MinimuxerCore {
                     task.abort();
                     let _ = task.await;
                 }
+                let mounter = self.make_mounter();
+                let task_docs = docs_path.clone();
                 let task = tokio::spawn(async move {
-                    Err::<bool, MmErrorInfo>(mm_gateway::unsupported("mountDDI"))
+                    mounter.mount(&task_docs).await
                 });
                 let result = task.await.unwrap_or_else(|e| {
                     Err(MmErrorInfo::new(
@@ -759,9 +769,9 @@ impl MinimuxerCore {
                         &format!("mount task failed: {e}"),
                     ))
                 });
-                // The task already completed; Swift stores it so
-                // stop()/mountDDI can cancel the *next* one — a
-                // finished handle is kept for shape fidelity.
+                // Swift stores the task so stop()/mountDDI can
+                // cancel the *next* one — a finished handle is
+                // kept for shape fidelity.
                 let stored = result.clone();
                 self.state.lock().unwrap().mount_task =
                     Some(tokio::spawn(async move { stored }));
@@ -769,6 +779,251 @@ impl MinimuxerCore {
             },
             |reason, protocol| MinimuxerError::Mount { protocol, reason },
         )
+        .await
+    }
+
+    /// Builds the Mounter over the current gateway, the net
+    /// stack's endpoint, and the current downloader.
+    fn make_mounter(&self) -> Mounter {
+        let stack = self.stack.clone();
+        let downloader = self.downloader.lock().unwrap().clone();
+        Mounter::new(
+            self.gateway(),
+            Arc::new(move || stack.endpoint.ip().ok()),
+            downloader,
+        )
+    }
+
+    /// Replaces the image downloader (test seam; production
+    /// uses reqwest).
+    pub fn set_image_downloader(&self, downloader: Arc<dyn ImageDownloader>) {
+        *self.downloader.lock().unwrap() = downloader;
+    }
+
+    /// Swift `ensureDDIMounted()`: a gateway error counts as
+    /// "not mounted"; without a recorded docs path the mount
+    /// cannot start.
+    async fn ensure_ddi_mounted(&self) -> Result<(), MinimuxerError> {
+        let mounted = self.gateway().is_ddi_mounted().await.unwrap_or(false);
+        if mounted {
+            return Ok(());
+        }
+        let docs_path = self.state.lock().unwrap().last_docs_path.clone();
+        match docs_path {
+            None => Err(MinimuxerError::Mount {
+                protocol: self.active_protocol(),
+                reason: "DDI mount path not set".to_string(),
+            }),
+            Some(path) => self.mount_ddi(&path).await.map(|_| ()),
+        }
+    }
+
+
+    // -- M5 operation forwards (Swift MinimuxerImpl) ---------------------------
+
+    /// Swift `sendIpaAfc(bundleId:ipa:)`.
+    pub async fn send_ipa_afc(
+        &self,
+        bundle_id: &str,
+        ipa_bytes: &[u8],
+    ) -> Result<(), MinimuxerError> {
+        let gw = self.gateway();
+        self.run_checks(gw.send_ipa_afc(bundle_id, ipa_bytes), |reason, _| {
+            MinimuxerError::RwAfc(reason)
+        })
+        .await
+    }
+
+    /// Swift `sendAppBundleAfc(bundleId:appPath:)`.
+    pub async fn send_app_bundle_afc(
+        &self,
+        bundle_id: &str,
+        app_path: &str,
+    ) -> Result<(), MinimuxerError> {
+        let gw = self.gateway();
+        self.run_checks(gw.send_app_bundle_afc(bundle_id, app_path), |reason, _| {
+            MinimuxerError::RwAfc(reason)
+        })
+        .await
+    }
+
+    /// Swift `installIpa(bundleId:)`.
+    pub async fn install_ipa(&self, bundle_id: &str) -> Result<(), MinimuxerError> {
+        let gw = self.gateway();
+        self.run_checks(gw.install_ipa(bundle_id), |reason, _| {
+            MinimuxerError::InstallApp(reason)
+        })
+        .await
+    }
+
+    /// Swift `installAppBundle(bundleId:appName:)`.
+    pub async fn install_app_bundle(
+        &self,
+        bundle_id: &str,
+        app_name: &str,
+    ) -> Result<(), MinimuxerError> {
+        let gw = self.gateway();
+        self.run_checks(gw.install_app_bundle(bundle_id, app_name), |reason, _| {
+            MinimuxerError::InstallApp(reason)
+        })
+        .await
+    }
+
+    /// Swift `removeApp(bundleId:)`.
+    pub async fn remove_app(&self, bundle_id: &str) -> Result<(), MinimuxerError> {
+        let gw = self.gateway();
+        self.run_checks(gw.remove_app(bundle_id), |reason, _| {
+            MinimuxerError::UninstallApp(reason)
+        })
+        .await
+    }
+
+    /// Swift `wipeContainer(bundleId:)`.
+    pub async fn wipe_container(&self, bundle_id: &str) -> Result<(), MinimuxerError> {
+        let gw = self.gateway();
+        self.run_checks(gw.wipe_container(bundle_id), |reason, _| {
+            MinimuxerError::UninstallApp(reason)
+        })
+        .await
+    }
+
+    /// Swift `debugApp(appId:)`: ensures the DDI is mounted
+    /// first (facade semantics).
+    pub async fn debug_app(&self, bundle_id: &str) -> Result<(), MinimuxerError> {
+        self.ensure_ddi_mounted().await?;
+        let gw = self.gateway();
+        self.run_checks(gw.debug_app(bundle_id), |reason, _| {
+            MinimuxerError::CreateDebug(reason)
+        })
+        .await
+    }
+
+    /// Swift `attachDebugger(pid:)`.
+    pub async fn attach_debugger(&self, pid: u32) -> Result<(), MinimuxerError> {
+        self.ensure_ddi_mounted().await?;
+        let gw = self.gateway();
+        self.run_checks(gw.debug_process(pid), |reason, _| {
+            MinimuxerError::CreateDebug(reason)
+        })
+        .await
+    }
+
+    /// Swift `installProvisioningProfile(_:)`.
+    pub async fn install_provisioning_profile(
+        &self,
+        profile: &[u8],
+    ) -> Result<(), MinimuxerError> {
+        let gw = self.gateway();
+        self.run_checks(gw.install_provisioning_profile(profile), |reason, _| {
+            MinimuxerError::ProfileInstall(reason)
+        })
+        .await
+    }
+
+    /// Swift `removeProvisioningProfile(id:)`.
+    pub async fn remove_provisioning_profile(
+        &self,
+        profile_id: &str,
+    ) -> Result<(), MinimuxerError> {
+        let gw = self.gateway();
+        self.run_checks(gw.remove_provisioning_profile(profile_id), |reason, _| {
+            MinimuxerError::ProfileRemove(reason)
+        })
+        .await
+    }
+
+    /// Swift `dumpProfiles(docsPath:mode:)`. `.zip` stages
+    /// the gateway dump in a temp directory and zips the
+    /// returned path's contents to
+    /// `<docsPath>/Profiles-<ISO8601>.zip`.
+    pub async fn dump_profiles(
+        &self,
+        docs_path: &str,
+        mode: ProfileDumpMode,
+    ) -> Result<String, MinimuxerError> {
+        let gw = self.gateway();
+        match mode {
+            ProfileDumpMode::Raw => {
+                self.run_checks(gw.dump_profiles(docs_path), |reason, _| {
+                    MinimuxerError::CreateMisagent(reason)
+                })
+                .await
+            }
+            ProfileDumpMode::Zip => {
+                let staging = std::env::temp_dir().join(format!(
+                    "mm-dump-{}-{}",
+                    std::process::id(),
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_nanos())
+                        .unwrap_or(0)
+                ));
+                let _ = std::fs::create_dir_all(&staging);
+                let staging_str = staging.to_string_lossy().into_owned();
+                let dumped = self
+                    .run_checks(gw.dump_profiles(&staging_str), |reason, _| {
+                        MinimuxerError::CreateMisagent(reason)
+                    })
+                    .await;
+                let result = dumped.and_then(|dumped_path| {
+                    let docs = docs_path
+                        .strip_prefix("file://")
+                        .unwrap_or(docs_path);
+                    let timestamp = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ");
+                    let zip_path = format!("{docs}/Profiles-{timestamp}.zip");
+                    crate::mounter::zip_dir_contents(
+                        std::path::Path::new(&dumped_path),
+                        std::path::Path::new(&zip_path),
+                    )
+                    .map(|_| zip_path)
+                    .map_err(|info| {
+                        // Swift's zipItem throw lands in the
+                        // facade catch-all (createMisagent).
+                        MinimuxerError::CreateMisagent(info.description())
+                    })
+                });
+                let _ = std::fs::remove_dir_all(&staging);
+                result
+            }
+        }
+    }
+
+    /// Swift `afcListDirectory(bundleId:path:)`.
+    pub async fn afc_list_directory(
+        &self,
+        bundle_id: &str,
+        path: &str,
+    ) -> Result<Vec<String>, MinimuxerError> {
+        let gw = self.gateway();
+        self.run_checks(gw.afc_list_directory(bundle_id, path), |reason, _| {
+            MinimuxerError::CreateAfc(reason)
+        })
+        .await
+    }
+
+    /// Swift `afcReadFile(bundleId:path:)`.
+    pub async fn afc_read_file(
+        &self,
+        bundle_id: &str,
+        path: &str,
+    ) -> Result<Vec<u8>, MinimuxerError> {
+        let gw = self.gateway();
+        self.run_checks(gw.afc_read_file(bundle_id, path), |reason, _| {
+            MinimuxerError::RwAfc(reason)
+        })
+        .await
+    }
+
+    /// Swift `afcGetFileInfo(bundleId:path:)`.
+    pub async fn afc_get_file_info(
+        &self,
+        bundle_id: &str,
+        path: &str,
+    ) -> Result<mm_gateway::AfcFileInfo, MinimuxerError> {
+        let gw = self.gateway();
+        self.run_checks(gw.afc_get_file_info(bundle_id, path), |reason, _| {
+            MinimuxerError::CreateAfc(reason)
+        })
         .await
     }
 

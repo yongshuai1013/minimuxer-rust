@@ -42,6 +42,14 @@ struct FakeGateway {
     fetch_result: Mutex<Result<String, MmErrorInfo>>,
     ddi_result: Mutex<Result<bool, MmErrorInfo>>,
     beats: Mutex<Vec<u64>>,
+    /// M5: ProductVersion served by get_lockdown_value.
+    product_version: Mutex<String>,
+    /// M5: mount calls as (kind, first_len, second_len).
+    mount_calls: Mutex<Vec<(String, usize, usize)>>,
+    /// M5: operation names in call order.
+    op_calls: Mutex<Vec<String>>,
+    /// M5: error returned by every M5 operation when set.
+    op_error: Mutex<Option<MmErrorInfo>>,
 }
 
 impl FakeGateway {
@@ -53,6 +61,10 @@ impl FakeGateway {
             fetch_result: Mutex::new(Ok("UDID-1".to_string())),
             ddi_result: Mutex::new(Ok(true)),
             beats: Mutex::new(Vec::new()),
+            product_version: Mutex::new("17.2".to_string()),
+            mount_calls: Mutex::new(Vec::new()),
+            op_calls: Mutex::new(Vec::new()),
+            op_error: Mutex::new(None),
         })
     }
 }
@@ -104,8 +116,13 @@ impl DeviceGateway for FakeGateway {
         Box::pin(async move { result })
     }
 
-    fn get_lockdown_value<'a>(&'a self, _key: &'a str) -> GatewayFuture<'a, String> {
-        Box::pin(async move { Err(mm_gateway::unsupported("getLockdownValue")) })
+    fn get_lockdown_value<'a>(&'a self, key: &'a str) -> GatewayFuture<'a, String> {
+        let value = if key == "ProductVersion" {
+            Ok(self.product_version.lock().unwrap().clone())
+        } else {
+            Err(mm_gateway::unsupported("getLockdownValue"))
+        };
+        Box::pin(async move { value })
     }
 
     fn start_session<'a>(&'a self) -> GatewayFuture<'a, ()> {
@@ -131,6 +148,85 @@ impl DeviceGateway for FakeGateway {
     fn is_ddi_mounted<'a>(&'a self) -> GatewayFuture<'a, bool> {
         let result = self.ddi_result.lock().unwrap().clone();
         Box::pin(async move { result })
+    }
+
+    fn mount_developer_image<'a>(
+        &'a self,
+        image: &'a [u8],
+        signature: &'a [u8],
+    ) -> GatewayFuture<'a, ()> {
+        self.mount_calls.lock().unwrap().push((
+            "developer".to_string(),
+            image.len(),
+            signature.len(),
+        ));
+        let err = self.op_error.lock().unwrap().clone();
+        Box::pin(async move { err.map_or(Ok(()), Err) })
+    }
+
+    fn mount_personalized_ddi<'a>(
+        &'a self,
+        image: &'a [u8],
+        trustcache: &'a [u8],
+        build_manifest: &'a [u8],
+    ) -> GatewayFuture<'a, ()> {
+        self.mount_calls.lock().unwrap().push((
+            "personalized".to_string(),
+            image.len(),
+            trustcache.len() + build_manifest.len(),
+        ));
+        let err = self.op_error.lock().unwrap().clone();
+        Box::pin(async move { err.map_or(Ok(()), Err) })
+    }
+
+    fn install_provisioning_profile<'a>(
+        &'a self,
+        _profile: &'a [u8],
+    ) -> GatewayFuture<'a, ()> {
+        self.op_calls
+            .lock()
+            .unwrap()
+            .push("installProfile".to_string());
+        let err = self.op_error.lock().unwrap().clone();
+        Box::pin(async move { err.map_or(Ok(()), Err) })
+    }
+
+    fn dump_profiles<'a>(&'a self, docs_path: &'a str) -> GatewayFuture<'a, String> {
+        self.op_calls
+            .lock()
+            .unwrap()
+            .push("dumpProfiles".to_string());
+        let err = self.op_error.lock().unwrap().clone();
+        let docs_path = docs_path.to_string();
+        Box::pin(async move {
+            if let Some(e) = err {
+                return Err(e);
+            }
+            let docs = docs_path.strip_prefix("file://").unwrap_or(&docs_path);
+            let dir = format!("{docs}/Profiles");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(format!("{dir}/AAAA.mobileprovision"), b"profile-bytes")
+                .unwrap();
+            Ok(dir)
+        })
+    }
+
+    fn install_ipa<'a>(&'a self, _bundle_id: &'a str) -> GatewayFuture<'a, ()> {
+        self.op_calls.lock().unwrap().push("installIpa".to_string());
+        let err = self.op_error.lock().unwrap().clone();
+        Box::pin(async move { err.map_or(Ok(()), Err) })
+    }
+
+    fn remove_app<'a>(&'a self, _bundle_id: &'a str) -> GatewayFuture<'a, ()> {
+        self.op_calls.lock().unwrap().push("removeApp".to_string());
+        let err = self.op_error.lock().unwrap().clone();
+        Box::pin(async move { err.map_or(Ok(()), Err) })
+    }
+
+    fn debug_app<'a>(&'a self, _bundle_id: &'a str) -> GatewayFuture<'a, ()> {
+        self.op_calls.lock().unwrap().push("debugApp".to_string());
+        let err = self.op_error.lock().unwrap().clone();
+        Box::pin(async move { err.map_or(Ok(()), Err) })
     }
 }
 
@@ -1013,4 +1109,367 @@ fn system_os_version_unreadable_is_never_at_least() {
     assert!(!v.at_least(26, 4));
     #[cfg(target_vendor = "apple")]
     let _ = v.at_least(0, 0);
+}
+
+// ---------------------------------------------------------------------------
+// M5: Mounter decision table + facade forwards
+// ---------------------------------------------------------------------------
+
+use mm_core::{ImageDownloader, ProfileDumpMode};
+
+struct FakeDownloader {
+    fixtures: Mutex<std::collections::HashMap<String, Vec<u8>>>,
+}
+
+impl FakeDownloader {
+    fn new(fixtures: Vec<(&str, Vec<u8>)>) -> Arc<Self> {
+        Arc::new(Self {
+            fixtures: Mutex::new(
+                fixtures
+                    .into_iter()
+                    .map(|(k, v)| (k.to_string(), v))
+                    .collect(),
+            ),
+        })
+    }
+}
+
+impl ImageDownloader for FakeDownloader {
+    fn fetch<'a>(
+        &'a self,
+        url: &'a str,
+    ) -> mm_core::core::CoreFuture<'a, Result<Vec<u8>, String>> {
+        let result = self
+            .fixtures
+            .lock()
+            .unwrap()
+            .get(url)
+            .cloned()
+            .ok_or_else(|| format!("no fixture for {url}"));
+        Box::pin(async move { result })
+    }
+}
+
+fn temp_docs(tag: &str) -> String {
+    let dir = std::env::temp_dir().join(format!(
+        "mm-core-m5-{tag}-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir.to_string_lossy().into_owned()
+}
+
+fn make_zip(entries: Vec<(&str, &[u8])>) -> Vec<u8> {
+    let mut buf = std::io::Cursor::new(Vec::new());
+    {
+        let mut writer = zip::ZipWriter::new(&mut buf);
+        let options = zip::write::SimpleFileOptions::default();
+        for (name, data) in entries {
+            use std::io::Write as _;
+            writer.start_file(name, options).unwrap();
+            writer.write_all(data).unwrap();
+        }
+        writer.finish().unwrap();
+    }
+    buf.into_inner()
+}
+
+#[tokio::test]
+async fn mounter_already_mounted_returns_false() {
+    let _guard = lock();
+    let h = harness(
+        DeviceConnectionMode::LocalVpn,
+        GatewayBackend::Idevice,
+        None,
+    )
+    .await;
+    let docs = temp_docs("already");
+    h.core.start(LOCKDOWN_XML, &docs, None).await.unwrap();
+    h.endpoint.update("127.0.0.1");
+    *h.gateway.ddi_result.lock().unwrap() = Ok(true);
+    let mounted = h.core.mount_ddi(&docs).await.unwrap();
+    assert!(!mounted);
+    assert!(h.gateway.mount_calls.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn mounter_no_endpoint_is_no_device() {
+    let _guard = lock();
+    let h = harness(
+        DeviceConnectionMode::LocalVpn,
+        GatewayBackend::Idevice,
+        None,
+    )
+    .await;
+    let docs = temp_docs("noendpoint");
+    h.core.start(LOCKDOWN_XML, &docs, None).await.unwrap();
+    h.endpoint.clear();
+    *h.gateway.ddi_result.lock().unwrap() = Ok(false);
+    let err = h.core.mount_ddi(&docs).await.unwrap_err();
+    match err {
+        MinimuxerError::NoDevice(reason) => {
+            assert_eq!(reason, "Reachable device IP not found")
+        }
+        other => panic!("expected NoDevice, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn mounter_pre17_uses_local_files() {
+    let _guard = lock();
+    let h = harness(
+        DeviceConnectionMode::LocalVpn,
+        GatewayBackend::Idevice,
+        None,
+    )
+    .await;
+    let docs = temp_docs("pre17local");
+    let dmg_dir = format!("{docs}/DMG");
+    std::fs::create_dir_all(&dmg_dir).unwrap();
+    std::fs::write(format!("{dmg_dir}/15.8.8.dmg"), b"DMG!").unwrap();
+    std::fs::write(format!("{dmg_dir}/15.8.8.dmg.signature"), b"SIG").unwrap();
+    h.core.start(LOCKDOWN_XML, &docs, None).await.unwrap();
+    h.endpoint.update("127.0.0.1");
+    *h.gateway.ddi_result.lock().unwrap() = Ok(false);
+    *h.gateway.product_version.lock().unwrap() = "15.8.8".to_string();
+    let mounted = h.core.mount_ddi(&docs).await.unwrap();
+    assert!(mounted);
+    let calls = h.gateway.mount_calls.lock().unwrap();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0], ("developer".to_string(), 4, 3));
+}
+
+#[tokio::test]
+async fn mounter_pre17_downloads_and_unzips() {
+    let _guard = lock();
+    let h = harness(
+        DeviceConnectionMode::LocalVpn,
+        GatewayBackend::Idevice,
+        None,
+    )
+    .await;
+    let docs = temp_docs("pre17zip");
+    h.core.start(LOCKDOWN_XML, &docs, None).await.unwrap();
+    h.endpoint.update("127.0.0.1");
+    *h.gateway.ddi_result.lock().unwrap() = Ok(false);
+    *h.gateway.product_version.lock().unwrap() = "15.8.8".to_string();
+    let zip = make_zip(vec![
+        ("iOS15/DeveloperDiskImage.dmg", b"DMGDATA"),
+        ("iOS15/DeveloperDiskImage.dmg.signature", b"SIGDATA"),
+        ("__MACOSX/junk", b"x"),
+    ]);
+    let downloader = FakeDownloader::new(vec![
+        (
+            mm_common::constants::PRE17_VERSIONS_URL,
+            br#"{"15.8.8": "https://example.test/dmg.zip"}"#.to_vec(),
+        ),
+        ("https://example.test/dmg.zip", zip),
+    ]);
+    h.core.set_image_downloader(downloader);
+    let mounted = h.core.mount_ddi(&docs).await.unwrap();
+    assert!(mounted);
+    let calls = h.gateway.mount_calls.lock().unwrap();
+    assert_eq!(calls[0], ("developer".to_string(), 7, 7));
+    // Files landed at the versioned names; zip/tmp cleaned.
+    assert!(std::path::Path::new(&format!("{docs}/DMG/15.8.8.dmg")).exists());
+    assert!(!std::path::Path::new(&format!("{docs}/DMG/dmg.zip")).exists());
+    assert!(!std::path::Path::new(&format!("{docs}/DMG/tmp")).exists());
+}
+
+#[tokio::test]
+async fn mounter_pre17_unknown_version_is_download_image_error() {
+    let _guard = lock();
+    let h = harness(
+        DeviceConnectionMode::LocalVpn,
+        GatewayBackend::Idevice,
+        None,
+    )
+    .await;
+    let docs = temp_docs("pre17missing");
+    h.core.start(LOCKDOWN_XML, &docs, None).await.unwrap();
+    h.endpoint.update("127.0.0.1");
+    *h.gateway.ddi_result.lock().unwrap() = Ok(false);
+    *h.gateway.product_version.lock().unwrap() = "15.8.8".to_string();
+    let downloader = FakeDownloader::new(vec![(
+        mm_common::constants::PRE17_VERSIONS_URL,
+        br#"{"16.0": "https://example.test/x.zip"}"#.to_vec(),
+    )]);
+    h.core.set_image_downloader(downloader);
+    let err = h.core.mount_ddi(&docs).await.unwrap_err();
+    match err {
+        MinimuxerError::DownloadImage(reason) => assert_eq!(
+            reason,
+            "Failed to retrieve pre-17 versions plist or find iOS 15.8.8 DMG URL"
+        ),
+        other => panic!("expected DownloadImage, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn mounter_post17_downloads_personalized() {
+    let _guard = lock();
+    let h = harness(
+        DeviceConnectionMode::LocalVpn,
+        GatewayBackend::Idevice,
+        None,
+    )
+    .await;
+    let docs = temp_docs("post17");
+    h.core.start(LOCKDOWN_XML, &docs, None).await.unwrap();
+    h.endpoint.update("127.0.0.1");
+    *h.gateway.ddi_result.lock().unwrap() = Ok(false);
+    *h.gateway.product_version.lock().unwrap() = "17.2".to_string();
+    let downloader = FakeDownloader::new(vec![
+        (mm_common::constants::DDI_IMAGE_URL, b"IMG".to_vec()),
+        (mm_common::constants::DDI_TRUSTCACHE_URL, b"TC".to_vec()),
+        (mm_common::constants::DDI_MANIFEST_URL, b"MFT".to_vec()),
+    ]);
+    h.core.set_image_downloader(downloader);
+    let mounted = h.core.mount_ddi(&docs).await.unwrap();
+    assert!(mounted);
+    let calls = h.gateway.mount_calls.lock().unwrap();
+    assert_eq!(calls[0].0, "personalized");
+    assert_eq!(calls[0].1, 3);
+    // Second mount run hits the local cache (downloader
+    // fixtures removed would still pass because files exist).
+    assert!(std::path::Path::new(&format!("{docs}/DMG/Image.dmg")).exists());
+}
+
+#[tokio::test]
+async fn mounter_invalid_product_version() {
+    let _guard = lock();
+    let h = harness(
+        DeviceConnectionMode::LocalVpn,
+        GatewayBackend::Idevice,
+        None,
+    )
+    .await;
+    let docs = temp_docs("badver");
+    h.core.start(LOCKDOWN_XML, &docs, None).await.unwrap();
+    h.endpoint.update("127.0.0.1");
+    *h.gateway.ddi_result.lock().unwrap() = Ok(false);
+    *h.gateway.product_version.lock().unwrap() = "abc".to_string();
+    let err = h.core.mount_ddi(&docs).await.unwrap_err();
+    match err {
+        MinimuxerError::InvalidProductVersion(v) => assert_eq!(v, "abc"),
+        other => panic!("expected InvalidProductVersion, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn facade_forwards_map_catch_all() {
+    let _guard = lock();
+    let h = harness(
+        DeviceConnectionMode::LocalVpn,
+        GatewayBackend::Idevice,
+        None,
+    )
+    .await;
+    h.core.start(LOCKDOWN_XML, "/tmp/docs", None).await.unwrap();
+    *h.gateway.op_error.lock().unwrap() = Some(MmErrorInfo::new(
+        "DeviceGatewayError",
+        "serviceError",
+        "boom",
+    ));
+    let err = h.core.install_ipa("com.example.app").await.unwrap_err();
+    match err {
+        MinimuxerError::InstallApp(reason) => assert_eq!(reason, "boom"),
+        other => panic!("expected InstallApp, got {other:?}"),
+    }
+    let err = h.core.remove_app("com.example.app").await.unwrap_err();
+    match err {
+        MinimuxerError::UninstallApp(reason) => assert_eq!(reason, "boom"),
+        other => panic!("expected UninstallApp, got {other:?}"),
+    }
+    let err = h
+        .core
+        .install_provisioning_profile(b"x")
+        .await
+        .unwrap_err();
+    match err {
+        MinimuxerError::ProfileInstall(reason) => assert_eq!(reason, "boom"),
+        other => panic!("expected ProfileInstall, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn debug_app_without_docs_path_is_mount_error() {
+    let _guard = lock();
+    let h = harness(
+        DeviceConnectionMode::LocalVpn,
+        GatewayBackend::Idevice,
+        None,
+    )
+    .await;
+    // No start(): no docs path recorded.
+    *h.gateway.ddi_result.lock().unwrap() = Ok(false);
+    let err = h.core.debug_app("com.example.app").await.unwrap_err();
+    match err {
+        MinimuxerError::Mount { reason, .. } => {
+            assert_eq!(reason, "DDI mount path not set")
+        }
+        other => panic!("expected Mount, got {other:?}"),
+    }
+    assert!(h.gateway.op_calls.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn debug_app_with_mounted_ddi_skips_mount() {
+    let _guard = lock();
+    let h = harness(
+        DeviceConnectionMode::LocalVpn,
+        GatewayBackend::Idevice,
+        None,
+    )
+    .await;
+    *h.gateway.ddi_result.lock().unwrap() = Ok(true);
+    h.core.debug_app("com.example.app").await.unwrap();
+    assert_eq!(
+        h.gateway.op_calls.lock().unwrap().as_slice(),
+        ["debugApp"]
+    );
+}
+
+#[tokio::test]
+async fn dump_profiles_zip_mode_zips_gateway_output() {
+    let _guard = lock();
+    let h = harness(
+        DeviceConnectionMode::LocalVpn,
+        GatewayBackend::Idevice,
+        None,
+    )
+    .await;
+    let docs = temp_docs("dumpzip");
+    let zip_path = h
+        .core
+        .dump_profiles(&docs, ProfileDumpMode::Zip)
+        .await
+        .unwrap();
+    assert!(zip_path.starts_with(&docs));
+    assert!(zip_path.contains("/Profiles-"));
+    assert!(zip_path.ends_with(".zip"));
+    let file = std::fs::File::open(&zip_path).unwrap();
+    let mut archive = zip::ZipArchive::new(file).unwrap();
+    assert_eq!(archive.len(), 1);
+    let entry = archive.by_index(0).unwrap();
+    assert_eq!(entry.name(), "AAAA.mobileprovision");
+}
+
+#[tokio::test]
+async fn dump_profiles_raw_returns_gateway_path() {
+    let _guard = lock();
+    let h = harness(
+        DeviceConnectionMode::LocalVpn,
+        GatewayBackend::Idevice,
+        None,
+    )
+    .await;
+    let docs = temp_docs("dumpraw");
+    let out = h
+        .core
+        .dump_profiles(&docs, ProfileDumpMode::Raw)
+        .await
+        .unwrap();
+    assert_eq!(out, format!("{docs}/Profiles"));
 }

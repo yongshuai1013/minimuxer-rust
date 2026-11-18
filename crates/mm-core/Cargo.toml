@@ -10,5 +10,9 @@ mm-rp = { path = "../mm-rp" }
 mm-gateway = { path = "../mm-gateway" }
 mm-emproxy = { path = "../mm-emproxy" }
 plist = "1"
+zip = "2"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+serde_json = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 libc = "0.2"
 tokio = { version = "1.44", features = ["rt", "sync", "time", "net", "io-util", "macros"] }
