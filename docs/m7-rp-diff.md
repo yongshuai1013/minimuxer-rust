@@ -84,3 +84,75 @@ port）M1/M4 已備。綁定不變、無重生。此評估記為 D-M7-5。
   idevice68 錯誤的 Display 文字——真機日誌比對時須知
   此差。gw-idevice 路的 reason 模板本以 FFI 訊息字串
   為主（`error: (<msg>)` 形），直接沿用。
+- **D-M7-7（withRPClient 的每次新建只在建立內部）**：
+  inventory 表 C 為 withRPClient 設了獨立封裝；實作上
+  limd 唯一呼叫點是隧道建立，`RpSession::establish` 內部
+  每次都新建 RemotePairingClient 並於隧道建成後 drop，
+  語意等價，不另設 API。
+- **D-M7-8（gw-idevice 重試與最終錯誤映射的落點）**：
+  Swift `performWithService` 的重試包住 connect＋操作
+  本體；最終映射（invalidPairingFile "Service connection
+  failed…"／serviceError "Failed to connect to…"）在移植
+  的落點為：操作本體的錯誤沿用各操作自己的 Swift 模板
+  （其 connect 失敗本就作 "Failed to connect to <服務>,
+  error: (…)"），重建階段的建立失敗走 rp_session 的映射
+  （pairing 類→invalidPairingFile "Handshake failed:
+  <msg>"、其餘→connectionFailed）。重試恰一次、invalidate
+  語意不變。
+- **D-M7-9（除錯串流不用 crate 的 DebugProxyClient）**：
+  `DebugProxyClient<R>` 是八服務中唯一的泛型客戶端；其
+  `RsdService` 的 RPIT future 被 gateway 重試閉包持有時
+  觸發 rustc 的 "implementation of RsdService is not
+  general enough"（Box 物件生命週期被泛化；探針最小重現
+  已確認，包裝型別亦不能解）。改走：mm-rp
+  `open_debug_stream`（服務名取自 crate 自身的
+  `rsd_service_name`）＋RpStream::rsd_checkin＋移植既有
+  `RspClient`（M5，為此將 RspClient 泛型化於串流型別、
+  預設型參保持 0.1.29 呼叫點不變）。線上行為與型別客戶端
+  等價（同 checkin、同 RSP 封包/校驗/ack 規則）。
+- **D-M7-10（limd 服務名來源與 misagent 分歧）**：gw-limd
+  的 RSD 服務名除 misagent 外取 idevice 棧的
+  `rsd_service_name` 值（目錄精確形）；misagent 照 Swift
+  limd 的 DeviceService 字面 `com.apple.mobile.
+  MCInstall.shim.remote`——crate 自身作 `com.apple.
+  misagent.shim.remote`，兩名分歧待真機驗（目錄實名以
+  裝置廣告為準；gw-idevice 路由 crate 內部查名、無模糊，
+  若真機目錄只有 MCInstall 形，gw-idevice 的 misagent
+  RSD 連接會 ServiceNotFound，列入真機待驗）。
+- **D-M7-11（idevice68 的來源是 git tag 而非 crates.io）**
+  ：cargo 不允許同一來源兩份 semver 相容版本（0.1.29 與
+  0.1.68 同屬 0.1 線）；故 0.1.29 側改精確釘 `=0.1.29`、
+  idevice68 走作者倉庫 git tag `v0.1.68`（已驗其
+  `idevice/src` 與 crates.io 0.1.68 發行源碼逐字相同，
+  補盤審計證據直接適用）。D-M7-2 的並存設計不變。
+
+## 4. 驗收對照（DESIGN §4 M7）
+
+- cargo test（host 側）：
+  - mm-rp 7 測：RSD 串流分幀 fixtures（BE 長度＋XML、
+    duplex 往返、超限拒收、checkin 字典形狀）＋埠解析
+    六級行為（精確／三後綴／前綴／子字串／無）。
+  - mm-gateway mock_lockdown 25 測全過：M3 時代兩格
+    「RP 操作 unsupported」已改寫為 M7 語意（真實 RP
+    配對檔 start 成功、無 endpoint→deviceEndpointIp
+    NotAvailable、有 endpoint 無服務→connectionFailed
+    "Failed to establish RemotePairing tunnel"；心跳
+    RP 路同驗 endpoint 關）。
+  - mm-core core_lifecycle 35 測全過，含新增
+    `is_ready_rp_mode_end_to_end`：真實 RP 配對檔經
+    start 載入→型別 RpPairing、埠表預設 49152、
+    service_port()=49152、第 7 關探 127.0.0.1:49152、
+    iOS 26.4 下第 4 關 ipsec 條款跳過（RP 分支）。
+  - 埠表行為：GatewayCore 既有測試（M2）＋上項預設值
+    斷言；set_params 的 RP 埠跨後端攜帶為 M4 既有接線，
+    本段未動。
+- macOS CI：全 workspace check＋新 crates 測試＋雙
+  slice 驗包（見回報；本機 Linux 無法鏈 limd 的測試
+  二進位，limd 段以 `cargo check --features limd` 本機
+  驗證、CI 為權威）。
+- 真機（留待整合場）：rppairing 配對檔 isReady 綠、
+  fetchUDID 成功、心跳存活 10 分鐘、RP 模式安裝一
+  App；另加：兩後端 RP 同場對照（limd 對照基準是行為
+  規格——Swift limd RP 為死碼，D-M7-1）、misagent RSD
+  目錄實名（D-M7-10）、debugApp/debugProcess RP 路、
+  personalized DDI RSD 路。

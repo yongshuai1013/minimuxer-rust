@@ -628,6 +628,39 @@ async fn gate4_ipsec_required_only_lockdown_on_ios26_4() {
     h.core.stop().await.unwrap();
 }
 
+/// M7: a real rppairing file loaded through `start` drives
+/// the readiness chain in RP mode — the pairing type comes
+/// from the file itself, and gate 7 probes the RP port,
+/// which defaults to 49152 when the table has no entry.
+#[tokio::test]
+async fn is_ready_rp_mode_end_to_end() {
+    let _g = lock();
+    let h = harness(
+        DeviceConnectionMode::LocalVpn,
+        GatewayBackend::Idevice,
+        Some((26, 4, 0)),
+    )
+    .await;
+    let rp_file = mm_rp::idevice68::remote_pairing::RpPairingFile::generate("minimuxer-test");
+    let rp_content = String::from_utf8(rp_file.to_bytes()).unwrap();
+    h.core.start(&rp_content, "/tmp/docs", None).await.unwrap();
+    assert_eq!(
+        h.core.pairing_file_type(),
+        PairingProtocol::RpPairing
+    );
+    // The default RP port, straight from the port table.
+    assert_eq!(h.gateway.core.get_port(PairingProtocol::RpPairing), 49152);
+    assert_eq!(h.gateway.service_port(), 49152);
+    // Gate 7 probes 127.0.0.1:49152; gate 8 reads the UDID
+    // through the (fake) gateway; gate 4's ipsec clause is
+    // skipped for RP even on iOS 26.4.
+    let listener = std::net::TcpListener::bind("127.0.0.1:49152").unwrap();
+    h.endpoint.update("127.0.0.1");
+    assert_eq!(h.core.is_ready(true, false).await, Ok(true));
+    drop(listener);
+    h.core.stop().await.unwrap();
+}
+
 #[tokio::test]
 async fn gate6_no_endpoint() {
     let _g = lock();
