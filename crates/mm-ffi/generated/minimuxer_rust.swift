@@ -961,6 +961,69 @@ class CbWrapper$mm_emproxy_stop {
 public func mm_emproxy_is_running() -> Bool {
     __swift_bridge__$mm_emproxy_is_running()
 }
+public func mm_wireless_bind_sink(_ sink: MmWirelessPairSink) {
+    __swift_bridge__$mm_wireless_bind_sink(Unmanaged.passRetained(sink).toOpaque())
+}
+public func mm_wireless_clear_sink() {
+    __swift_bridge__$mm_wireless_clear_sink()
+}
+public func mm_wireless_start<GenericIntoRustString: IntoRustString>(_ host_name: GenericIntoRustString, _ host_model: GenericIntoRustString, _ out_path: GenericIntoRustString) async -> MmPairedDeviceOutcome {
+    func onComplete(cbWrapperPtr: UnsafeMutableRawPointer?, rustFnRetVal: __swift_bridge__$MmPairedDeviceOutcome) {
+        let wrapper = Unmanaged<CbWrapper$mm_wireless_start>.fromOpaque(cbWrapperPtr!).takeRetainedValue()
+        wrapper.cb(.success(rustFnRetVal.intoSwiftRepr()))
+    }
+
+    return await withCheckedContinuation({ (continuation: CheckedContinuation<MmPairedDeviceOutcome, Never>) in
+        let callback = { rustFnRetVal in
+            continuation.resume(with: rustFnRetVal)
+        }
+
+        let wrapper = CbWrapper$mm_wireless_start(cb: callback)
+        let wrapperPtr = Unmanaged.passRetained(wrapper).toOpaque()
+
+        __swift_bridge__$mm_wireless_start(wrapperPtr, onComplete, { let rustString = host_name.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), { let rustString = host_model.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), { let rustString = out_path.intoRustString(); rustString.isOwned = false; return rustString.ptr }())
+    })
+}
+class CbWrapper$mm_wireless_start {
+    var cb: (Result<MmPairedDeviceOutcome, Never>) -> ()
+
+    public init(cb: @escaping (Result<MmPairedDeviceOutcome, Never>) -> ()) {
+        self.cb = cb
+    }
+}
+public func mm_wireless_trigger<GenericIntoRustString: IntoRustString>(_ target_ip: GenericIntoRustString, _ target_port: UInt16, _ host_name: GenericIntoRustString, _ host_model: GenericIntoRustString, _ out_path: GenericIntoRustString) async -> MmPairedDeviceOutcome {
+    func onComplete(cbWrapperPtr: UnsafeMutableRawPointer?, rustFnRetVal: __swift_bridge__$MmPairedDeviceOutcome) {
+        let wrapper = Unmanaged<CbWrapper$mm_wireless_trigger>.fromOpaque(cbWrapperPtr!).takeRetainedValue()
+        wrapper.cb(.success(rustFnRetVal.intoSwiftRepr()))
+    }
+
+    return await withCheckedContinuation({ (continuation: CheckedContinuation<MmPairedDeviceOutcome, Never>) in
+        let callback = { rustFnRetVal in
+            continuation.resume(with: rustFnRetVal)
+        }
+
+        let wrapper = CbWrapper$mm_wireless_trigger(cb: callback)
+        let wrapperPtr = Unmanaged.passRetained(wrapper).toOpaque()
+
+        __swift_bridge__$mm_wireless_trigger(wrapperPtr, onComplete, { let rustString = target_ip.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), target_port, { let rustString = host_name.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), { let rustString = host_model.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), { let rustString = out_path.intoRustString(); rustString.isOwned = false; return rustString.ptr }())
+    })
+}
+class CbWrapper$mm_wireless_trigger {
+    var cb: (Result<MmPairedDeviceOutcome, Never>) -> ()
+
+    public init(cb: @escaping (Result<MmPairedDeviceOutcome, Never>) -> ()) {
+        self.cb = cb
+    }
+}
+public func mm_wireless_stop() {
+    __swift_bridge__$mm_wireless_stop()
+}
+public func mm_wireless_complete_pin<GenericIntoRustString: IntoRustString>(_ request_id: UInt64, _ pin: GenericIntoRustString) -> Bool {
+    __swift_bridge__$mm_wireless_complete_pin(request_id, { let rustString = pin.intoRustString(); rustString.isOwned = false; return rustString.ptr }())
+}
+public func mm_wireless_state() -> MmWirelessState {
+    __swift_bridge__$mm_wireless_state().intoSwiftRepr()
+}
 public func mm_core_set_params(_ backend: Optional<MmGatewayBackend>, _ remote_pairing_port: Optional<UInt16>, _ device_probe_timeout: Optional<Int32>) {
     __swift_bridge__$mm_core_set_params(__swift_bridge__$Option$MmGatewayBackend.fromSwiftRepr(backend), remote_pairing_port.intoFfiRepr(), device_probe_timeout.intoFfiRepr())
 }
@@ -1039,6 +1102,26 @@ func __swift_bridge__MmConnectionConfig_get_remote_server_ip (_ this: UnsafeMuta
 @_cdecl("__swift_bridge__$MmConnectionConfig$request_service_port")
 func __swift_bridge__MmConnectionConfig_request_service_port (_ this: UnsafeMutableRawPointer, _ request_id: UInt64, _ protocol: __swift_bridge__$MmPairingProtocol, _ port: UInt16) {
     Unmanaged<MmConnectionConfig>.fromOpaque(this).takeUnretainedValue().request_service_port(request_id: request_id, protocol: protocol.intoSwiftRepr(), port: port)
+}
+
+@_cdecl("__swift_bridge__$MmWirelessPairSink$on_pin_received")
+func __swift_bridge__MmWirelessPairSink_on_pin_received (_ this: UnsafeMutableRawPointer, _ pin: UnsafeMutableRawPointer) {
+    Unmanaged<MmWirelessPairSink>.fromOpaque(this).takeUnretainedValue().on_pin_received(pin: RustString(ptr: pin))
+}
+
+@_cdecl("__swift_bridge__$MmWirelessPairSink$on_ready_to_pair")
+func __swift_bridge__MmWirelessPairSink_on_ready_to_pair (_ this: UnsafeMutableRawPointer, _ service_id: UnsafeMutableRawPointer, _ port: Int32) {
+    Unmanaged<MmWirelessPairSink>.fromOpaque(this).takeUnretainedValue().on_ready_to_pair(service_id: RustString(ptr: service_id), port: port)
+}
+
+@_cdecl("__swift_bridge__$MmWirelessPairSink$request_pin")
+func __swift_bridge__MmWirelessPairSink_request_pin (_ this: UnsafeMutableRawPointer, _ request_id: UInt64) -> Bool {
+    Unmanaged<MmWirelessPairSink>.fromOpaque(this).takeUnretainedValue().request_pin(request_id: request_id)
+}
+
+@_cdecl("__swift_bridge__$MmWirelessPairSink$resolve_file_name")
+func __swift_bridge__MmWirelessPairSink_resolve_file_name (_ this: UnsafeMutableRawPointer, _ name: UnsafeMutableRawPointer, _ model: UnsafeMutableRawPointer) -> __swift_bridge__$MmResolveOutcome {
+    Unmanaged<MmWirelessPairSink>.fromOpaque(this).takeUnretainedValue().resolve_file_name(name: RustString(ptr: name), model: RustString(ptr: model)).intoFfiRepr()
 }
 
 public struct MmErrorInfo {
@@ -1801,6 +1884,133 @@ extension __swift_bridge__$Option$MmAfcFileInfoOutcome {
         }
     }
 }
+public struct MmPairedDeviceOutcome {
+    public var success: Bool
+    public var name: RustString
+    public var model: RustString
+    public var pairing_file_path: RustString
+    public var pairing_file_content: RustString
+    public var error: MmErrorInfo
+
+    public init(success: Bool,name: RustString,model: RustString,pairing_file_path: RustString,pairing_file_content: RustString,error: MmErrorInfo) {
+        self.success = success
+        self.name = name
+        self.model = model
+        self.pairing_file_path = pairing_file_path
+        self.pairing_file_content = pairing_file_content
+        self.error = error
+    }
+
+    @inline(__always)
+    func intoFfiRepr() -> __swift_bridge__$MmPairedDeviceOutcome {
+        { let val = self; return __swift_bridge__$MmPairedDeviceOutcome(success: val.success, name: { let rustString = val.name.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), model: { let rustString = val.model.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), pairing_file_path: { let rustString = val.pairing_file_path.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), pairing_file_content: { let rustString = val.pairing_file_content.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), error: val.error.intoFfiRepr()); }()
+    }
+}
+extension __swift_bridge__$MmPairedDeviceOutcome {
+    @inline(__always)
+    func intoSwiftRepr() -> MmPairedDeviceOutcome {
+        { let val = self; return MmPairedDeviceOutcome(success: val.success, name: RustString(ptr: val.name), model: RustString(ptr: val.model), pairing_file_path: RustString(ptr: val.pairing_file_path), pairing_file_content: RustString(ptr: val.pairing_file_content), error: val.error.intoSwiftRepr()); }()
+    }
+}
+extension __swift_bridge__$Option$MmPairedDeviceOutcome {
+    @inline(__always)
+    func intoSwiftRepr() -> Optional<MmPairedDeviceOutcome> {
+        if self.is_some {
+            return self.val.intoSwiftRepr()
+        } else {
+            return nil
+        }
+    }
+
+    @inline(__always)
+    static func fromSwiftRepr(_ val: Optional<MmPairedDeviceOutcome>) -> __swift_bridge__$Option$MmPairedDeviceOutcome {
+        if let v = val {
+            return __swift_bridge__$Option$MmPairedDeviceOutcome(is_some: true, val: v.intoFfiRepr())
+        } else {
+            return __swift_bridge__$Option$MmPairedDeviceOutcome(is_some: false, val: __swift_bridge__$MmPairedDeviceOutcome())
+        }
+    }
+}
+public struct MmResolveOutcome {
+    public var has_resolver: Bool
+    public var file_name: RustString
+
+    public init(has_resolver: Bool,file_name: RustString) {
+        self.has_resolver = has_resolver
+        self.file_name = file_name
+    }
+
+    @inline(__always)
+    func intoFfiRepr() -> __swift_bridge__$MmResolveOutcome {
+        { let val = self; return __swift_bridge__$MmResolveOutcome(has_resolver: val.has_resolver, file_name: { let rustString = val.file_name.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); }()
+    }
+}
+extension __swift_bridge__$MmResolveOutcome {
+    @inline(__always)
+    func intoSwiftRepr() -> MmResolveOutcome {
+        { let val = self; return MmResolveOutcome(has_resolver: val.has_resolver, file_name: RustString(ptr: val.file_name)); }()
+    }
+}
+extension __swift_bridge__$Option$MmResolveOutcome {
+    @inline(__always)
+    func intoSwiftRepr() -> Optional<MmResolveOutcome> {
+        if self.is_some {
+            return self.val.intoSwiftRepr()
+        } else {
+            return nil
+        }
+    }
+
+    @inline(__always)
+    static func fromSwiftRepr(_ val: Optional<MmResolveOutcome>) -> __swift_bridge__$Option$MmResolveOutcome {
+        if let v = val {
+            return __swift_bridge__$Option$MmResolveOutcome(is_some: true, val: v.intoFfiRepr())
+        } else {
+            return __swift_bridge__$Option$MmResolveOutcome(is_some: false, val: __swift_bridge__$MmResolveOutcome())
+        }
+    }
+}
+public struct MmWirelessState {
+    public var start_active: Bool
+    public var active_triggers: Int32
+    public var advertising: Bool
+
+    public init(start_active: Bool,active_triggers: Int32,advertising: Bool) {
+        self.start_active = start_active
+        self.active_triggers = active_triggers
+        self.advertising = advertising
+    }
+
+    @inline(__always)
+    func intoFfiRepr() -> __swift_bridge__$MmWirelessState {
+        { let val = self; return __swift_bridge__$MmWirelessState(start_active: val.start_active, active_triggers: val.active_triggers, advertising: val.advertising); }()
+    }
+}
+extension __swift_bridge__$MmWirelessState {
+    @inline(__always)
+    func intoSwiftRepr() -> MmWirelessState {
+        { let val = self; return MmWirelessState(start_active: val.start_active, active_triggers: val.active_triggers, advertising: val.advertising); }()
+    }
+}
+extension __swift_bridge__$Option$MmWirelessState {
+    @inline(__always)
+    func intoSwiftRepr() -> Optional<MmWirelessState> {
+        if self.is_some {
+            return self.val.intoSwiftRepr()
+        } else {
+            return nil
+        }
+    }
+
+    @inline(__always)
+    static func fromSwiftRepr(_ val: Optional<MmWirelessState>) -> __swift_bridge__$Option$MmWirelessState {
+        if let v = val {
+            return __swift_bridge__$Option$MmWirelessState(is_some: true, val: v.intoFfiRepr())
+        } else {
+            return __swift_bridge__$Option$MmWirelessState(is_some: false, val: __swift_bridge__$MmWirelessState())
+        }
+    }
+}
 public enum MmProfileDumpMode {
     case Raw
     case Zip
@@ -1966,6 +2176,12 @@ extension MmCoreStatus: Vectorizable {
         __swift_bridge__$Vec_MmCoreStatus$len(vecPtr)
     }
 }
+
+@_cdecl("__swift_bridge__$MmWirelessPairSink$_free")
+func __swift_bridge__MmWirelessPairSink__free (ptr: UnsafeMutableRawPointer) {
+    let _ = Unmanaged<MmWirelessPairSink>.fromOpaque(ptr).takeRetainedValue()
+}
+
 
 @_cdecl("__swift_bridge__$MmConnectionConfig$_free")
 func __swift_bridge__MmConnectionConfig__free (ptr: UnsafeMutableRawPointer) {

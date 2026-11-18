@@ -64,6 +64,12 @@ typedef struct __swift_bridge__$MmDataOutcome { bool success; void* data; struct
 typedef struct __swift_bridge__$Option$MmDataOutcome { bool is_some; __swift_bridge__$MmDataOutcome val; } __swift_bridge__$Option$MmDataOutcome;
 typedef struct __swift_bridge__$MmAfcFileInfoOutcome { bool success; bool is_directory; int64_t file_size; struct __swift_bridge__$MmErrorInfo error; } __swift_bridge__$MmAfcFileInfoOutcome;
 typedef struct __swift_bridge__$Option$MmAfcFileInfoOutcome { bool is_some; __swift_bridge__$MmAfcFileInfoOutcome val; } __swift_bridge__$Option$MmAfcFileInfoOutcome;
+typedef struct __swift_bridge__$MmPairedDeviceOutcome { bool success; void* name; void* model; void* pairing_file_path; void* pairing_file_content; struct __swift_bridge__$MmErrorInfo error; } __swift_bridge__$MmPairedDeviceOutcome;
+typedef struct __swift_bridge__$Option$MmPairedDeviceOutcome { bool is_some; __swift_bridge__$MmPairedDeviceOutcome val; } __swift_bridge__$Option$MmPairedDeviceOutcome;
+typedef struct __swift_bridge__$MmResolveOutcome { bool has_resolver; void* file_name; } __swift_bridge__$MmResolveOutcome;
+typedef struct __swift_bridge__$Option$MmResolveOutcome { bool is_some; __swift_bridge__$MmResolveOutcome val; } __swift_bridge__$Option$MmResolveOutcome;
+typedef struct __swift_bridge__$MmWirelessState { bool start_active; int32_t active_triggers; bool advertising; } __swift_bridge__$MmWirelessState;
+typedef struct __swift_bridge__$Option$MmWirelessState { bool is_some; __swift_bridge__$MmWirelessState val; } __swift_bridge__$Option$MmWirelessState;
 typedef enum __swift_bridge__$MmProfileDumpModeTag { __swift_bridge__$MmProfileDumpMode$Raw, __swift_bridge__$MmProfileDumpMode$Zip, } __swift_bridge__$MmProfileDumpModeTag;
 typedef struct __swift_bridge__$MmProfileDumpMode { __swift_bridge__$MmProfileDumpModeTag tag; } __swift_bridge__$MmProfileDumpMode;
 typedef struct __swift_bridge__$Option$MmProfileDumpMode { bool is_some; __swift_bridge__$MmProfileDumpMode val; } __swift_bridge__$Option$MmProfileDumpMode;
@@ -159,6 +165,13 @@ void __swift_bridge__$mm_emproxy_start(void* callback_wrapper, void __swift_brid
 void __swift_bridge__$mm_emproxy_start_default(void* callback_wrapper, void __swift_bridge__$mm_emproxy_start_default$async(void* callback_wrapper, struct __swift_bridge__$MmOutcome ret));
 void __swift_bridge__$mm_emproxy_stop(void* callback_wrapper, void __swift_bridge__$mm_emproxy_stop$async(void* callback_wrapper, struct __swift_bridge__$MmOutcome ret));
 bool __swift_bridge__$mm_emproxy_is_running(void);
+void __swift_bridge__$mm_wireless_bind_sink(void* sink);
+void __swift_bridge__$mm_wireless_clear_sink(void);
+void __swift_bridge__$mm_wireless_start(void* callback_wrapper, void __swift_bridge__$mm_wireless_start$async(void* callback_wrapper, struct __swift_bridge__$MmPairedDeviceOutcome ret), void* host_name, void* host_model, void* out_path);
+void __swift_bridge__$mm_wireless_trigger(void* callback_wrapper, void __swift_bridge__$mm_wireless_trigger$async(void* callback_wrapper, struct __swift_bridge__$MmPairedDeviceOutcome ret), void* target_ip, uint16_t target_port, void* host_name, void* host_model, void* out_path);
+void __swift_bridge__$mm_wireless_stop(void);
+bool __swift_bridge__$mm_wireless_complete_pin(uint64_t request_id, void* pin);
+struct __swift_bridge__$MmWirelessState __swift_bridge__$mm_wireless_state(void);
 void __swift_bridge__$mm_core_set_params(struct __swift_bridge__$Option$MmGatewayBackend backend, struct __private__OptionU16 remote_pairing_port, struct __private__OptionI32 device_probe_timeout);
 struct __swift_bridge__$MmCoreStatus __swift_bridge__$mm_core_status(void);
 void __swift_bridge__$mm_core_set_logging(bool enabled);

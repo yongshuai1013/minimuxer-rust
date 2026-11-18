@@ -41,7 +41,7 @@ jobs:
       # device over USB/Wi-Fi; they cannot run on a CI host and never
       # ran in this repo's CI.
       - name: Cargo test (new crates)
-        run: cargo test -p mm-common -p mm-net -p mm-gateway -p mm-core -p mm-emproxy -p mm-ffi
+        run: cargo test -p mm-common -p mm-net -p mm-rp -p mm-gateway -p mm-core -p mm-emproxy -p mm-ffi
 
       # The libimobiledevice backend is feature-isolated (its test
       # binaries would need the C library to link); type-check it

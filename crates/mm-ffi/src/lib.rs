@@ -191,6 +191,37 @@ mod ffi {
         error: MmErrorInfo,
     }
 
+    // Outcome of a wireless pairing operation (M8): the
+    // PairedDeviceRecord flattened for the bridge; the
+    // pairing file crosses as its raw plist text (both
+    // pairing formats are XML plists).
+    #[swift_bridge(swift_repr = "struct")]
+    struct MmPairedDeviceOutcome {
+        success: bool,
+        name: String,
+        model: String,
+        pairing_file_path: String,
+        pairing_file_content: String,
+        error: MmErrorInfo,
+    }
+
+    // Return of the sink's resolve_file_name: swift-bridge
+    // has no Option<String> return across an extern Swift
+    // fn, so "no resolver / no answer" is the flag.
+    #[swift_bridge(swift_repr = "struct")]
+    struct MmResolveOutcome {
+        has_resolver: bool,
+        file_name: String,
+    }
+
+    // Wireless pairing service state (M8 status query).
+    #[swift_bridge(swift_repr = "struct")]
+    struct MmWirelessState {
+        start_active: bool,
+        active_triggers: i32,
+        advertising: bool,
+    }
+
     // FFI twin of `mm_core::ProfileDumpMode`.
     enum MmProfileDumpMode {
         Raw,
@@ -327,6 +358,27 @@ mod ffi {
         async fn mm_emproxy_start_default() -> MmOutcome;
         async fn mm_emproxy_stop() -> MmOutcome;
         fn mm_emproxy_is_running() -> bool;
+        // Wireless pairing (M8): the WirelessPairService
+        // face of the core. The sink carries the App-side
+        // handlers (PIN delivery, readiness, PIN requests
+        // by id, pairing-file-name resolution).
+        fn mm_wireless_bind_sink(sink: MmWirelessPairSink);
+        fn mm_wireless_clear_sink();
+        async fn mm_wireless_start(
+            host_name: String,
+            host_model: String,
+            out_path: String,
+        ) -> MmPairedDeviceOutcome;
+        async fn mm_wireless_trigger(
+            target_ip: String,
+            target_port: u16,
+            host_name: String,
+            host_model: String,
+            out_path: String,
+        ) -> MmPairedDeviceOutcome;
+        fn mm_wireless_stop();
+        fn mm_wireless_complete_pin(request_id: u64, pin: String) -> bool;
+        fn mm_wireless_state() -> MmWirelessState;
         fn mm_core_set_params(
             backend: Option<MmGatewayBackend>,
             remote_pairing_port: Option<u16>,
@@ -374,6 +426,25 @@ mod ffi {
             protocol: MmPairingProtocol,
             port: u16,
         );
+
+        // The App-side wireless pairing handlers (M8):
+        // Swift WirelessPairService's callback properties
+        // as one object. request_pin returns whether the
+        // App has a PIN handler and issued the request;
+        // the answer returns via mm_wireless_complete_pin.
+        type MmWirelessPairSink;
+        fn on_pin_received(self: &MmWirelessPairSink, pin: String);
+        fn on_ready_to_pair(
+            self: &MmWirelessPairSink,
+            service_id: String,
+            port: i32,
+        );
+        fn request_pin(self: &MmWirelessPairSink, request_id: u64) -> bool;
+        fn resolve_file_name(
+            self: &MmWirelessPairSink,
+            name: String,
+            model: String,
+        ) -> MmResolveOutcome;
     }
 }
 
@@ -1540,6 +1611,158 @@ fn mm_emproxy_is_running() -> bool {
 }
 
 // ---------------------------------------------------------------------------
+// mm-core M8 face: wireless pairing. The App-side
+// handlers live on one Swift object (MmWirelessPairSink)
+// held in a registry like the EventSink; an adapter
+// presents it to the core service as its
+// WirelessPairAppEvents. Calls into the Swift object
+// are serialized on the registry mutex (the App-side
+// object is not documented thread-safe).
+// ---------------------------------------------------------------------------
+
+struct WirelessSinkHolder(ffi::MmWirelessPairSink);
+// Only ever touched under the registry mutex; the shell
+// keeps the object alive while bound and unbinds before
+// releasing it.
+unsafe impl Send for WirelessSinkHolder {}
+
+static WIRELESS_SINK: Mutex<Option<WirelessSinkHolder>> = Mutex::new(None);
+
+fn with_wireless_sink<R>(
+    f: impl FnOnce(&ffi::MmWirelessPairSink) -> R,
+) -> Option<R> {
+    let guard = WIRELESS_SINK.lock().ok()?;
+    guard.as_ref().map(|holder| f(&holder.0))
+}
+
+/// The sink presented to the core's wireless pairing
+/// service as its App events.
+struct WirelessSinkEvents;
+
+impl mm_core::WirelessPairAppEvents for WirelessSinkEvents {
+    fn on_pin_received(&self, pin: &str) {
+        let pin = pin.to_string();
+        let _ = with_wireless_sink(|sink| sink.on_pin_received(pin));
+    }
+
+    fn on_ready_to_pair(&self, service_id: &str, port: i32) {
+        let service_id = service_id.to_string();
+        let _ = with_wireless_sink(|sink| {
+            sink.on_ready_to_pair(service_id, port)
+        });
+    }
+
+    fn request_pin(&self, request_id: u64) -> bool {
+        with_wireless_sink(|sink| sink.request_pin(request_id))
+            .unwrap_or(false)
+    }
+
+    fn resolve_file_name(&self, name: &str, model: &str) -> Option<String> {
+        let outcome = with_wireless_sink(|sink| {
+            sink.resolve_file_name(name.to_string(), model.to_string())
+        })?;
+        if outcome.has_resolver {
+            Some(outcome.file_name)
+        } else {
+            None
+        }
+    }
+}
+
+fn mm_wireless_bind_sink(sink: ffi::MmWirelessPairSink) {
+    if let Ok(mut guard) = WIRELESS_SINK.lock() {
+        *guard = Some(WirelessSinkHolder(sink));
+    }
+    core_globals()
+        .core
+        .wireless_pair()
+        .set_app_events(Some(std::sync::Arc::new(WirelessSinkEvents)));
+}
+
+fn mm_wireless_clear_sink() {
+    if let Ok(mut guard) = WIRELESS_SINK.lock() {
+        *guard = None;
+    }
+    core_globals().core.wireless_pair().set_app_events(None);
+}
+
+fn paired_outcome_from(
+    result: Result<mm_gateway::PairedDeviceRecord, mm_common::MmErrorInfo>,
+) -> ffi::MmPairedDeviceOutcome {
+    match result {
+        Ok(record) => ffi::MmPairedDeviceOutcome {
+            success: true,
+            name: record.name,
+            model: record.model,
+            pairing_file_path: record.pairing_file_path,
+            pairing_file_content: record.pairing_file.raw_content().to_string(),
+            error: empty_error(),
+        },
+        Err(e) => ffi::MmPairedDeviceOutcome {
+            success: false,
+            name: String::new(),
+            model: String::new(),
+            pairing_file_path: String::new(),
+            pairing_file_content: String::new(),
+            error: e.into(),
+        },
+    }
+}
+
+async fn mm_wireless_start(
+    host_name: String,
+    host_model: String,
+    out_path: String,
+) -> ffi::MmPairedDeviceOutcome {
+    let service = core_globals().core.wireless_pair().clone();
+    paired_outcome_from(
+        spawn_gateway(async move {
+            service.start(&host_name, &host_model, &out_path).await
+        })
+        .await,
+    )
+}
+
+async fn mm_wireless_trigger(
+    target_ip: String,
+    target_port: u16,
+    host_name: String,
+    host_model: String,
+    out_path: String,
+) -> ffi::MmPairedDeviceOutcome {
+    let service = core_globals().core.wireless_pair().clone();
+    paired_outcome_from(
+        spawn_gateway(async move {
+            service
+                .trigger(&target_ip, target_port, &host_name, &host_model, &out_path)
+                .await
+        })
+        .await,
+    )
+}
+
+fn mm_wireless_stop() {
+    core_globals().core.wireless_pair().stop();
+}
+
+fn mm_wireless_complete_pin(request_id: u64, pin: String) -> bool {
+    core_globals()
+        .core
+        .wireless_pair()
+        .complete_pin(request_id, pin)
+}
+
+fn mm_wireless_state() -> ffi::MmWirelessState {
+    let service = core_globals().core.wireless_pair();
+    let (start_active, triggers) = service.state();
+    ffi::MmWirelessState {
+        start_active,
+        active_triggers: triggers as i32,
+        advertising: service.is_advertising(),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Host-test link stubs: the `__swift_bridge__$...` C symbols for the
 // extern Swift types are provided by the generated Swift in the real
 // build. Host tests never hold Swift objects (no sink is registered,
@@ -1603,6 +1826,38 @@ mod swift_symbol_stubs {
     }
     #[export_name = "__swift_bridge__$MmConnectionConfig$_free"]
     extern "C" fn cfg_free(_ptr: *mut c_void) {}
+
+    #[export_name = "__swift_bridge__$MmWirelessPairSink$on_pin_received"]
+    extern "C" fn wp_on_pin_received(_this: *mut c_void, _pin: *mut c_void) {}
+    #[export_name = "__swift_bridge__$MmWirelessPairSink$on_ready_to_pair"]
+    extern "C" fn wp_on_ready_to_pair(
+        _this: *mut c_void,
+        _service_id: *mut c_void,
+        _port: i32,
+    ) {
+    }
+    #[export_name = "__swift_bridge__$MmWirelessPairSink$request_pin"]
+    extern "C" fn wp_request_pin(_this: *mut c_void, _request_id: u64) -> bool {
+        false
+    }
+    #[repr(C)]
+    struct MmResolveOutcomeStub {
+        has_resolver: bool,
+        file_name: *mut c_void,
+    }
+    #[export_name = "__swift_bridge__$MmWirelessPairSink$resolve_file_name"]
+    extern "C" fn wp_resolve_file_name(
+        _this: *mut c_void,
+        _name: *mut c_void,
+        _model: *mut c_void,
+    ) -> MmResolveOutcomeStub {
+        MmResolveOutcomeStub {
+            has_resolver: false,
+            file_name: std::ptr::null_mut(),
+        }
+    }
+    #[export_name = "__swift_bridge__$MmWirelessPairSink$_free"]
+    extern "C" fn wp_free(_ptr: *mut c_void) {}
 }
 
 #[cfg(test)]
@@ -1610,6 +1865,35 @@ mod tests {
     use super::*;
 
     const LOCKDOWN_XML: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\">\n<dict>\n<key>WiFiMACAddress</key>\n<string>AA:BB:CC:DD:EE:FF</string>\n<key>SystemBUID</key>\n<string>BUID-1</string>\n<key>RootPrivateKey</key>\n<data>AAECAw==</data>\n<key>HostPrivateKey</key>\n<data>AAECAw==</data>\n<key>HostID</key>\n<string>H1</string>\n<key>RootCertificate</key>\n<data>AAECAw==</data>\n<key>UDID</key>\n<string>UDID-1</string>\n<key>EscrowBag</key>\n<data>AAECAw==</data>\n<key>HostCertificate</key>\n<data>AAECAw==</data>\n<key>DeviceCertificate</key>\n<data>AAECAw==</data>\n</dict>\n</plist>\n";
+
+    #[test]
+    fn m8_paired_outcome_carries_record_and_error() {
+        let pairing_file =
+            mm_common::parse_pairing_content(LOCKDOWN_XML, None).expect("parse");
+        let record = mm_gateway::PairedDeviceRecord {
+            name: "Peer".to_string(),
+            model: "iPhone18,1".to_string(),
+            pairing_file_path: "/docs/Peer_iPhone18,1_rp.plist".to_string(),
+            pairing_file,
+        };
+        let ok = paired_outcome_from(Ok(record));
+        assert!(ok.success);
+        assert_eq!(ok.name, "Peer");
+        assert_eq!(ok.model, "iPhone18,1");
+        assert_eq!(ok.pairing_file_path, "/docs/Peer_iPhone18,1_rp.plist");
+        assert!(ok.pairing_file_content.contains("UDID-1"));
+        assert_eq!(ok.error.domain, "");
+
+        let err = paired_outcome_from(Err(mm_common::MmErrorInfo::new(
+            "DeviceGatewayError",
+            "serviceError",
+            "Pairing failed or cancelled",
+        )));
+        assert!(!err.success);
+        assert_eq!(err.error.code, "serviceError");
+        assert_eq!(err.error.reason, "Pairing failed or cancelled");
+        assert!(err.pairing_file_content.is_empty());
+    }
 
     #[test]
     fn m5_outcome_helpers_carry_payloads_and_errors() {
