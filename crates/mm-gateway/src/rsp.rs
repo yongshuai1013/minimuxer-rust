@@ -309,12 +309,15 @@ fn rsp_checksum(data: &str) -> String {
 /// the crate exactly (name + uppercase-hex argv, `$…#cc`
 /// framing, ack mode); the response reader consumes the two
 /// checksum characters per the protocol.
-pub struct RspClient {
-    stream: Box<dyn idevice::ReadWrite>,
+pub struct RspClient<S = Box<dyn idevice::ReadWrite>> {
+    stream: S,
 }
 
-impl RspClient {
-    pub fn new(stream: Box<dyn idevice::ReadWrite>) -> Self {
+impl<S> RspClient<S>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    pub fn new(stream: S) -> Self {
         Self { stream }
     }
 

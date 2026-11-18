@@ -6,11 +6,13 @@
 //! StartSession per call, exactly like Swift's
 //! `performWithEitherService` → `performWithTcpService` route), an
 //! explicit session slot, and `open_service` (StartService +
-//! connect). The RP route of `performWithEitherService` and the
-//! usbmuxd route (`performWithUsbmuxdService`, which has no call
-//! sites in Swift) are implemented as helpers; RP operations
-//! themselves return `unsupportedOperation` until M7 (diff list
-//! D-1/D-2).
+//! connect). M7 adds the RP route of
+//! `performWithEitherService`: a cached mm-rp session
+//! (`ensureRPConnection`), the invalidate-rebuild-retry-once
+//! of `performWithService`, and the RP operations in
+//! `gw_idevice_rp` (diff list `docs/m7-rp-diff.md`). The
+//! usbmuxd route (`performWithUsbmuxdService`, which has no
+//! call sites in Swift) is implemented as a helper.
 
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -26,7 +28,7 @@ use mm_common::logging::debug_log;
 use mm_common::{DeviceGatewayCode, MmErrorInfo, PairingProtocol};
 
 use crate::base::GatewayCore;
-use crate::gateway::{gw_error, unsupported, DeviceGateway, GatewayBackend, GatewayFuture, OpenedService};
+use crate::gateway::{gw_error, DeviceGateway, GatewayBackend, GatewayFuture, OpenedService};
 
 /// Swift `IdeviceGateway` (`requiresUsbmuxd = false`).
 pub struct IdeviceGateway {
@@ -38,6 +40,26 @@ pub struct IdeviceGateway {
     session: Mutex<Option<SessionSlot>>,
     /// Open service connections by service identifier.
     services: Mutex<HashMap<String, ServiceSlot>>,
+    /// The loaded RemotePairing identity (M7; Swift's
+    /// `rpPairingFile` FFI object).
+    rp_identity: Mutex<Option<mm_rp::RpIdentity>>,
+    /// Swift `ensureRPConnection`'s cache: the established
+    /// (adapter, handshake) pair, as one `RpSession`.
+    rp_session: Mutex<Option<RpSessionSlot>>,
+    /// Open RSD service streams by service identifier.
+    rp_services: Mutex<HashMap<String, RpServiceSlot>>,
+}
+
+struct RpSessionSlot {
+    session: crate::gw_idevice_rp::RpSessionHandle,
+    generation: u64,
+}
+
+struct RpServiceSlot {
+    #[allow(dead_code)]
+    stream: mm_rp::RpStream,
+    #[allow(dead_code)]
+    generation: u64,
 }
 
 struct SessionSlot {
@@ -65,6 +87,9 @@ impl IdeviceGateway {
             pairing_file: Mutex::new(None),
             session: Mutex::new(None),
             services: Mutex::new(HashMap::new()),
+            rp_identity: Mutex::new(None),
+            rp_session: Mutex::new(None),
+            rp_services: Mutex::new(HashMap::new()),
         }
     }
 
@@ -75,6 +100,9 @@ impl IdeviceGateway {
         *self.pairing_file.lock().unwrap() = None;
         *self.session.lock().unwrap() = None;
         self.services.lock().unwrap().clear();
+        *self.rp_identity.lock().unwrap() = None;
+        *self.rp_session.lock().unwrap() = None;
+        self.rp_services.lock().unwrap().clear();
         self.core.cleanup();
     }
 
@@ -177,6 +205,89 @@ impl IdeviceGateway {
             .unwrap()
             .retain(|_, slot| slot.generation == generation);
     }
+
+    // -- M7: RemotePairing session management ----------------
+
+    fn require_rp_identity(&self) -> Result<mm_rp::RpIdentity, MmErrorInfo> {
+        self.rp_identity
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or_else(|| {
+                gw_error(DeviceGatewayCode::NotInitialized, "pairingFile is nil")
+            })
+    }
+
+    /// Swift `ensureRPConnection`: return the cached session
+    /// while the core generation is unchanged, otherwise
+    /// establish a fresh one (pair-verify + tunnel + RSD
+    /// handshake, via mm-rp).
+    async fn rp_session(
+        &self,
+    ) -> Result<crate::gw_idevice_rp::RpSessionHandle, MmErrorInfo> {
+        let generation = self.core.generation();
+        {
+            let slot = self.rp_session.lock().unwrap();
+            if let Some(slot) = slot.as_ref() {
+                if slot.generation == generation {
+                    return Ok(slot.session.clone());
+                }
+            }
+        }
+        let identity = self.require_rp_identity()?;
+        let endpoint = self.require_endpoint_ip()?;
+        let port = self.core.get_port(PairingProtocol::RpPairing);
+        let session = mm_rp::RpSession::establish(&endpoint, port, APP_NAME, &identity)
+            .await
+            .map_err(|e| {
+                if e.pairing {
+                    gw_error(
+                        DeviceGatewayCode::InvalidPairingFile,
+                        format!("Handshake failed: {}", e.message),
+                    )
+                } else {
+                    gw_error(
+                        DeviceGatewayCode::ConnectionFailed,
+                        format!(
+                            "Failed to establish RemotePairing tunnel: {}",
+                            e.message
+                        ),
+                    )
+                }
+            })?;
+        let handle: crate::gw_idevice_rp::RpSessionHandle =
+            std::sync::Arc::new(tokio::sync::Mutex::new(session));
+        *self.rp_session.lock().unwrap() = Some(RpSessionSlot {
+            session: handle.clone(),
+            generation,
+        });
+        Ok(handle)
+    }
+
+    /// Swift `invalidateConnection` (RP half).
+    fn invalidate_rp_session(&self) {
+        *self.rp_session.lock().unwrap() = None;
+        self.rp_services.lock().unwrap().clear();
+    }
+
+    /// Swift `performWithService` (RP route): run `op` on the
+    /// cached session; on failure invalidate, rebuild the
+    /// session and retry exactly once (diff list D-M7-8).
+    async fn perform_rp<T, F, Fut>(&self, op: F) -> Result<T, MmErrorInfo>
+    where
+        F: Fn(crate::gw_idevice_rp::RpSessionHandle) -> Fut,
+        Fut: std::future::Future<Output = Result<T, MmErrorInfo>>,
+    {
+        let session = self.rp_session().await?;
+        match op(session).await {
+            Ok(value) => Ok(value),
+            Err(_) => {
+                self.invalidate_rp_session();
+                let session = self.rp_session().await?;
+                op(session).await
+            }
+        }
+    }
 }
 
 impl DeviceGateway for IdeviceGateway {
@@ -226,10 +337,20 @@ impl DeviceGateway for IdeviceGateway {
                     *self.pairing_file.lock().unwrap() = Some(pf);
                 }
                 PairingProtocol::RpPairing => {
-                    // Diff list D-2: the RP FFI pairing object is an
-                    // M7 (mm-rp) concern; M3 stores the parsed state
-                    // and marks initialized, RP operations report
-                    // unsupportedOperation.
+                    // M7: build the RP identity object (Swift's
+                    // `rp_pairing_file_from_bytes` at start).
+                    let identity = mm_rp::RpIdentity::load(parsed.raw_data())
+                        .map_err(|e| {
+                            debug_log(&format!(
+                                "[IdeviceGateway] start() rp_pairing_file_from_bytes failed: {}",
+                                e.message
+                            ));
+                            gw_error(
+                                DeviceGatewayCode::InvalidPairingFile,
+                                "rp_pairing_file_from_bytes failed",
+                            )
+                        })?;
+                    *self.rp_identity.lock().unwrap() = Some(identity);
                 }
                 PairingProtocol::Unknown => {
                     // The parser never yields Unknown on success.
@@ -268,7 +389,11 @@ impl DeviceGateway for IdeviceGateway {
         Box::pin(async move {
             self.verify_initialized()?;
             if self.core.pairing_file_type() == PairingProtocol::RpPairing {
-                return Err(unsupported("getLockdownValue"));
+                return self
+                    .perform_rp(|session| async move {
+                        crate::gw_idevice_rp::get_lockdown_value(&session, key).await
+                    })
+                    .await;
             }
             let mut client = self.connect_lockdown().await?;
             self.start_session_on(&mut client).await?;
@@ -299,7 +424,9 @@ impl DeviceGateway for IdeviceGateway {
         Box::pin(async move {
             self.verify_initialized()?;
             if self.core.pairing_file_type() == PairingProtocol::RpPairing {
-                return Err(unsupported("startSession"));
+                // RP analog: establishing the RP session is
+                // the authenticated-session proof on this route.
+                return self.rp_session().await.map(|_| ());
             }
             let generation = self.core.generation();
             {
@@ -320,6 +447,7 @@ impl DeviceGateway for IdeviceGateway {
     fn stop_session<'a>(&'a self) -> GatewayFuture<'a, ()> {
         Box::pin(async move {
             *self.session.lock().unwrap() = None;
+            self.invalidate_rp_session();
             Ok(())
         })
     }
@@ -331,8 +459,15 @@ impl DeviceGateway for IdeviceGateway {
             ));
             self.verify_initialized()?;
             if self.core.pairing_file_type() == PairingProtocol::RpPairing {
-                // The RSD heartbeat path is M7 (diff list D-2).
-                return Err(unsupported("performHeartbeat"));
+                let new_interval = self
+                    .perform_rp(|session| async move {
+                        crate::gw_idevice_rp::perform_heartbeat(&session, interval).await
+                    })
+                    .await?;
+                debug_log(&format!(
+                    "[IdeviceGateway] performHeartbeat() succeeded, newInterval: {new_interval}"
+                ));
+                return Ok(new_interval);
             }
             // Swift `performWithEitherService` (lockdown route):
             // a fresh heartbeat connection per beat.
@@ -373,7 +508,45 @@ impl DeviceGateway for IdeviceGateway {
         Box::pin(async move {
             self.verify_initialized()?;
             if self.core.pairing_file_type() == PairingProtocol::RpPairing {
-                return Err(unsupported("openService"));
+                let (opened, stream) = self
+                    .perform_rp(|session| async move {
+                        let mut guard = session.lock().await;
+                        let port = guard.service_port(service_name).ok_or_else(|| {
+                            gw_error(
+                                DeviceGatewayCode::ServiceError,
+                                format!(
+                                    "Failed to connect to {service_name}, error: (RSD service not found)"
+                                ),
+                            )
+                        })?;
+                        let stream = guard
+                            .open_stream(service_name)
+                            .await
+                            .map_err(|e| {
+                                gw_error(
+                                    DeviceGatewayCode::ServiceError,
+                                    format!(
+                                        "Failed to connect to {service_name}, error: ({})",
+                                        e.message
+                                    ),
+                                )
+                            })?;
+                        Ok((
+                            OpenedService {
+                                service_name: service_name.to_string(),
+                                port,
+                                enable_ssl: false,
+                            },
+                            stream,
+                        ))
+                    })
+                    .await?;
+                let generation = self.core.generation();
+                self.rp_services.lock().unwrap().insert(
+                    service_name.to_string(),
+                    RpServiceSlot { stream, generation },
+                );
+                return Ok(opened);
             }
             self.drop_stale_services();
             let provider = self.tcp_provider()?;
@@ -413,15 +586,19 @@ impl DeviceGateway for IdeviceGateway {
     }
     // ------------------------------------------------------------------
     // M5: DDI mount, install pipeline, profiles, debug
-    // (docs/m5-install-ddi-debug-diff.md). RP routes return
-    // unsupported until M7, per the established convention.
+    // (docs/m5-install-ddi-debug-diff.md). M7: the RP routes
+    // dispatch to gw_idevice_rp through perform_rp.
     // ------------------------------------------------------------------
 
     fn is_ddi_mounted<'a>(&'a self) -> GatewayFuture<'a, bool> {
         Box::pin(async move {
             self.verify_initialized()?;
             if self.core.pairing_file_type() == PairingProtocol::RpPairing {
-                return Err(unsupported("isDDIMounted"));
+                return self
+                    .perform_rp(|session| async move {
+                        Ok(crate::gw_idevice_rp::is_ddi_mounted(&session).await)
+                    })
+                    .await;
             }
             let ctx = self.m5_ctx()?;
             Ok(crate::gw_idevice_ops::is_ddi_mounted(&ctx).await)
@@ -436,7 +613,14 @@ impl DeviceGateway for IdeviceGateway {
         Box::pin(async move {
             self.verify_initialized()?;
             if self.core.pairing_file_type() == PairingProtocol::RpPairing {
-                return Err(unsupported("mountDeveloperImage"));
+                return self
+                    .perform_rp(|session| async move {
+                        crate::gw_idevice_rp::mount_developer_image(
+                            &session, image, signature,
+                        )
+                        .await
+                    })
+                    .await;
             }
             let ctx = self.m5_ctx()?;
             crate::gw_idevice_ops::mount_developer_image(&ctx, image, signature).await
@@ -452,7 +636,17 @@ impl DeviceGateway for IdeviceGateway {
         Box::pin(async move {
             self.verify_initialized()?;
             if self.core.pairing_file_type() == PairingProtocol::RpPairing {
-                return Err(unsupported("mountPersonalizedDdi"));
+                return self
+                    .perform_rp(|session| async move {
+                        crate::gw_idevice_rp::mount_personalized_ddi(
+                            &session,
+                            image,
+                            trustcache,
+                            build_manifest,
+                        )
+                        .await
+                    })
+                    .await;
             }
             let ctx = self.m5_ctx()?;
             crate::gw_idevice_ops::mount_personalized_ddi(
@@ -472,7 +666,11 @@ impl DeviceGateway for IdeviceGateway {
         Box::pin(async move {
             self.verify_initialized()?;
             if self.core.pairing_file_type() == PairingProtocol::RpPairing {
-                return Err(unsupported("installProvisioningProfile"));
+                return self
+                    .perform_rp(|session| async move {
+                        crate::gw_idevice_rp::misagent_install(&session, profile).await
+                    })
+                    .await;
             }
             let ctx = self.m5_ctx()?;
             crate::gw_idevice_ops::misagent_install(&ctx, profile).await
@@ -486,7 +684,11 @@ impl DeviceGateway for IdeviceGateway {
         Box::pin(async move {
             self.verify_initialized()?;
             if self.core.pairing_file_type() == PairingProtocol::RpPairing {
-                return Err(unsupported("removeProvisioningProfile"));
+                return self
+                    .perform_rp(|session| async move {
+                        crate::gw_idevice_rp::misagent_remove(&session, profile_id).await
+                    })
+                    .await;
             }
             let ctx = self.m5_ctx()?;
             crate::gw_idevice_ops::misagent_remove(&ctx, profile_id).await
@@ -497,7 +699,12 @@ impl DeviceGateway for IdeviceGateway {
         Box::pin(async move {
             self.verify_initialized()?;
             if self.core.pairing_file_type() == PairingProtocol::RpPairing {
-                return Err(unsupported("dumpProfiles"));
+                let payloads = self
+                    .perform_rp(|session| async move {
+                        crate::gw_idevice_rp::misagent_copy_all(&session).await
+                    })
+                    .await?;
+                return Ok(dump_profiles_to_disk(docs_path, &payloads));
             }
             let ctx = self.m5_ctx()?;
             let payloads = crate::gw_idevice_ops::misagent_copy_all(&ctx).await?;
@@ -509,7 +716,12 @@ impl DeviceGateway for IdeviceGateway {
         Box::pin(async move {
             self.verify_initialized()?;
             if self.core.pairing_file_type() == PairingProtocol::RpPairing {
-                return Err(unsupported("removeApp"));
+                return self
+                    .perform_rp(|session| async move {
+                        crate::gw_idevice_rp::instproxy_uninstall(&session, bundle_id)
+                            .await
+                    })
+                    .await;
             }
             let ctx = self.m5_ctx()?;
             crate::gw_idevice_ops::instproxy_uninstall(&ctx, bundle_id).await
@@ -524,7 +736,12 @@ impl DeviceGateway for IdeviceGateway {
         Box::pin(async move {
             self.verify_initialized()?;
             if self.core.pairing_file_type() == PairingProtocol::RpPairing {
-                return Err(unsupported("sendIpaAfc"));
+                return self
+                    .perform_rp(|session| async move {
+                        crate::gw_idevice_rp::send_ipa_afc(&session, bundle_id, ipa_bytes)
+                            .await
+                    })
+                    .await;
             }
             let ctx = self.m5_ctx()?;
             crate::gw_idevice_ops::send_ipa_afc(&ctx, bundle_id, ipa_bytes).await
@@ -539,7 +756,16 @@ impl DeviceGateway for IdeviceGateway {
         Box::pin(async move {
             self.verify_initialized()?;
             if self.core.pairing_file_type() == PairingProtocol::RpPairing {
-                return Err(unsupported("sendAppBundleAfc"));
+                return self
+                    .perform_rp(|session| async move {
+                        crate::gw_idevice_rp::send_app_bundle_afc(
+                            &session,
+                            bundle_id,
+                            std::path::Path::new(app_path),
+                        )
+                        .await
+                    })
+                    .await;
             }
             let ctx = self.m5_ctx()?;
             crate::gw_idevice_ops::send_app_bundle_afc(
@@ -555,7 +781,19 @@ impl DeviceGateway for IdeviceGateway {
         Box::pin(async move {
             self.verify_initialized()?;
             if self.core.pairing_file_type() == PairingProtocol::RpPairing {
-                return Err(unsupported("installIpa"));
+                return self
+                    .perform_rp(|session| async move {
+                        let package_path =
+                            format!("PublicStaging/{bundle_id}/app.ipa");
+                        crate::gw_idevice_rp::instproxy_install(
+                            &session,
+                            &package_path,
+                            None,
+                            "Failed to install IPA",
+                        )
+                        .await
+                    })
+                    .await;
             }
             let ctx = self.m5_ctx()?;
             let package_path = format!("PublicStaging/{bundle_id}/app.ipa");
@@ -577,7 +815,24 @@ impl DeviceGateway for IdeviceGateway {
         Box::pin(async move {
             self.verify_initialized()?;
             if self.core.pairing_file_type() == PairingProtocol::RpPairing {
-                return Err(unsupported("installAppBundle"));
+                return self
+                    .perform_rp(|session| async move {
+                        let package_path =
+                            format!("PublicStaging/{bundle_id}/{app_name}");
+                        let mut options = plist::Dictionary::new();
+                        options.insert(
+                            "PackageType".into(),
+                            plist::Value::String("Developer".into()),
+                        );
+                        crate::gw_idevice_rp::instproxy_install(
+                            &session,
+                            &package_path,
+                            Some(options),
+                            "Failed to install App directory",
+                        )
+                        .await
+                    })
+                    .await;
             }
             let ctx = self.m5_ctx()?;
             let package_path = format!("PublicStaging/{bundle_id}/{app_name}");
@@ -600,7 +855,11 @@ impl DeviceGateway for IdeviceGateway {
         Box::pin(async move {
             self.verify_initialized()?;
             if self.core.pairing_file_type() == PairingProtocol::RpPairing {
-                return Err(unsupported("wipeContainer"));
+                return self
+                    .perform_rp(|session| async move {
+                        crate::gw_idevice_rp::wipe_container(&session, bundle_id).await
+                    })
+                    .await;
             }
             let ctx = self.m5_ctx()?;
             crate::gw_idevice_ops::wipe_container(&ctx, bundle_id).await
@@ -611,7 +870,11 @@ impl DeviceGateway for IdeviceGateway {
         Box::pin(async move {
             self.verify_initialized()?;
             if self.core.pairing_file_type() == PairingProtocol::RpPairing {
-                return Err(unsupported("debugApp"));
+                return self
+                    .perform_rp(|session| async move {
+                        crate::gw_idevice_rp::debug_app(&session, bundle_id).await
+                    })
+                    .await;
             }
             let ctx = self.m5_ctx()?;
             let mux_addr = usbmuxd_addr_from_env(
@@ -623,9 +886,18 @@ impl DeviceGateway for IdeviceGateway {
         })
     }
 
-    fn debug_process<'a>(&'a self, _pid: u32) -> GatewayFuture<'a, ()> {
+    fn debug_process<'a>(&'a self, pid: u32) -> GatewayFuture<'a, ()> {
         Box::pin(async move {
             self.verify_initialized()?;
+            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
+                // The RP route is where this operation exists
+                // (M7); the lockdown route stays unsupported.
+                return self
+                    .perform_rp(|session| async move {
+                        crate::gw_idevice_rp::debug_process(&session, pid).await
+                    })
+                    .await;
+            }
             // Swift parity (D-M5-1): the idevice backend's
             // lockdown debugProcess throws unsupportedOperation
             // with this reason, verbatim.
@@ -644,7 +916,14 @@ impl DeviceGateway for IdeviceGateway {
         Box::pin(async move {
             self.verify_initialized()?;
             if self.core.pairing_file_type() == PairingProtocol::RpPairing {
-                return Err(unsupported("afcListDirectory"));
+                return self
+                    .perform_rp(|session| async move {
+                        crate::gw_idevice_rp::afc_list_directory(
+                            &session, bundle_id, path,
+                        )
+                        .await
+                    })
+                    .await;
             }
             let ctx = self.m5_ctx()?;
             crate::gw_idevice_ops::afc_list_directory(&ctx, bundle_id, path).await
@@ -659,7 +938,12 @@ impl DeviceGateway for IdeviceGateway {
         Box::pin(async move {
             self.verify_initialized()?;
             if self.core.pairing_file_type() == PairingProtocol::RpPairing {
-                return Err(unsupported("afcReadFile"));
+                return self
+                    .perform_rp(|session| async move {
+                        crate::gw_idevice_rp::afc_read_file(&session, bundle_id, path)
+                            .await
+                    })
+                    .await;
             }
             let ctx = self.m5_ctx()?;
             crate::gw_idevice_ops::afc_read_file(&ctx, bundle_id, path).await
@@ -674,7 +958,14 @@ impl DeviceGateway for IdeviceGateway {
         Box::pin(async move {
             self.verify_initialized()?;
             if self.core.pairing_file_type() == PairingProtocol::RpPairing {
-                return Err(unsupported("afcGetFileInfo"));
+                return self
+                    .perform_rp(|session| async move {
+                        crate::gw_idevice_rp::afc_get_file_info(
+                            &session, bundle_id, path,
+                        )
+                        .await
+                    })
+                    .await;
             }
             let ctx = self.m5_ctx()?;
             crate::gw_idevice_ops::afc_get_file_info(&ctx, bundle_id, path).await

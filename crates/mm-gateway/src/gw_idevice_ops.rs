@@ -339,7 +339,7 @@ pub async fn send_ipa_afc(
 /// Recursive directory walk shared by `send_app_bundle_afc`:
 /// directories become remote mkdirs (errors ignored, as in
 /// Swift), files are opened Wr and written when non-empty.
-fn collect_bundle_files(
+pub(crate) fn collect_bundle_files(
     dir: &Path,
     out: &mut Vec<(std::path::PathBuf, bool)>,
 ) -> Result<(), MmErrorInfo> {

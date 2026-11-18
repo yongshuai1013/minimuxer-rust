@@ -28,6 +28,7 @@ pub mod base;
 pub mod gateway;
 pub mod gw_idevice;
 pub mod gw_idevice_ops;
+pub mod gw_idevice_rp;
 #[cfg(feature = "limd")]
 pub mod gw_limd;
 #[cfg(feature = "limd")]

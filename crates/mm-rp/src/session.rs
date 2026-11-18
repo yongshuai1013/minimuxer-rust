@@ -270,6 +270,25 @@ impl RpSession {
             .map_err(|e| RpError::from68("service", e))
     }
 
+    /// Opens the raw RSD stream for the debugserver service
+    /// (its directory name comes from the crate's own
+    /// `rsd_service_name`, not a transcription). The gateway
+    /// runs the port's `RspClient` over this stream after
+    /// [`RpStream::rsd_checkin`]: the crate's
+    /// `DebugProxyClient` is its one generic service client,
+    /// and its `RsdService` RPIT future does not survive
+    /// being held inside the gateways' retry closures (the
+    /// "implementation of RsdService is not general enough"
+    /// wall, diff list D-M7-9). The wire behavior is the
+    /// same checkin + RSP the typed client performs.
+    pub async fn open_debug_stream(&mut self) -> RpResult<RpStream> {
+        use idevice68::RsdService as _;
+        let name = idevice68::services::debug_proxy::DebugProxyClient::<
+            Box<dyn idevice68::ReadWrite + 'static>,
+        >::rsd_service_name();
+        self.open_stream(&name).await
+    }
+
     /// The RSD form of the personalized DDI mount (Swift
     /// idevice's dedicated path, inventory §4): UniqueChipID
     /// from the RSD lockdownd first, then the crate's

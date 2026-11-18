@@ -9,8 +9,12 @@ mm-common = { path = "../mm-common" }
 # Renamed on purpose (diff list D-M7-2): the workspace also
 # carries idevice 0.1.29 for the lockdown paths; the two major
 # lines' types never mix — everything 0.1.68 is reached through
-# this crate's re-export.
-idevice68 = { package = "idevice", version = "0.1.68", default-features = false, features = [
+# this crate's re-export. The source is the author's git tag
+# v0.1.68 (verified byte-identical to the crates.io 0.1.68
+# sources): cargo refuses two semver-compatible versions of
+# one crate from a single source, so the registry 0.1.29 line
+# and this git 0.1.68 line are what makes the pair coexist.
+idevice68 = { package = "idevice", git = "https://github.com/jkcoxson/idevice", tag = "v0.1.68", default-features = false, features = [
   "remote_pairing",
   "rsd",
   "tunnel_tcp_stack",
