@@ -908,6 +908,20 @@ impl DeviceGateway for IdeviceGateway {
         })
     }
 
+    fn start_wireless_pair<'a>(
+        &'a self,
+        args: crate::gateway::WirelessPairStart<'a>,
+    ) -> GatewayFuture<'a, crate::gateway::PairedDeviceRecord> {
+        Box::pin(crate::gw_idevice_wireless::start_wireless_pair(args))
+    }
+
+    fn trigger_wireless_pair<'a>(
+        &'a self,
+        args: crate::gateway::WirelessPairTrigger<'a>,
+    ) -> GatewayFuture<'a, crate::gateway::PairedDeviceRecord> {
+        Box::pin(crate::gw_idevice_wireless::trigger_wireless_pair(args))
+    }
+
     fn afc_list_directory<'a>(
         &'a self,
         bundle_id: &'a str,

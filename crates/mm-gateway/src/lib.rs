@@ -29,6 +29,7 @@ pub mod gateway;
 pub mod gw_idevice;
 pub mod gw_idevice_ops;
 pub mod gw_idevice_rp;
+pub mod gw_idevice_wireless;
 #[cfg(feature = "limd")]
 pub mod gw_limd;
 #[cfg(feature = "limd")]
@@ -42,8 +43,9 @@ pub mod rsd_afc;
 pub use afc_session::AfcSession;
 pub use base::GatewayCore;
 pub use gateway::{
-    unsupported, AfcFileInfo, DeviceGateway, GatewayBackend, GatewayFuture,
-    GatewayProvider, OpenedService,
+    posix_error, unsupported, AfcFileInfo, DeviceGateway, GatewayBackend,
+    GatewayFuture, GatewayProvider, OpenedService, PairCancelToken,
+    PairedDeviceRecord, WirelessPairEvents, WirelessPairStart, WirelessPairTrigger,
 };
 pub use rsp::{
     decode_hex_ascii, find_process_pid, process_search_terms, string_to_hex,

@@ -14,9 +14,12 @@
 
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use mm_common::{DeviceGatewayCode, DeviceGatewayError, MmErrorInfo, PairingProtocol};
+use mm_common::{
+    DeviceGatewayCode, DeviceGatewayError, MmErrorInfo, PairingFile, PairingProtocol,
+};
 use plist::Dictionary;
 
 use crate::base::GatewayCore;
@@ -88,6 +91,20 @@ pub fn gw_error(code: DeviceGatewayCode, reason: impl Into<String>) -> MmErrorIn
 /// description template "Operation '<reason>' is not supported.").
 pub fn unsupported(operation: &str) -> MmErrorInfo {
     gw_error(DeviceGatewayCode::UnsupportedOperation, operation)
+}
+
+/// Swift's `POSIXError` as it crosses the port's error bus
+/// (diff list D-M8-5): the domain is NSPOSIXErrorDomain,
+/// the code the errno number, the reason the io error's
+/// message — the shell rebuilds a POSIXError from the
+/// triple. Used by the wireless pair acceptor paths
+/// (Swift `TCPAcceptor` throws POSIXError verbatim).
+pub fn posix_error(err: &std::io::Error) -> MmErrorInfo {
+    MmErrorInfo::new(
+        "NSPOSIXErrorDomain",
+        &err.raw_os_error().unwrap_or(0).to_string(),
+        &err.to_string(),
+    )
 }
 
 /// The device gateway. Implementations: [`crate::IdeviceGateway`]
@@ -320,6 +337,32 @@ pub trait DeviceGateway: Send + Sync {
     ) -> GatewayFuture<'a, AfcFileInfo> {
         Box::pin(async move { Err(unsupported("afcGetFileInfo")) })
     }
+
+    // -- M8 wireless pairing (behavior list
+    // docs/m8-wireless-behavior.md §B). Defaults report
+    // `unsupportedOperation` with the Swift operation
+    // name; gw-idevice implements both, gw-limd
+    // overrides with Swift's verbatim lockdown reasons
+    // (behavior G12).
+
+    /// Swift `startWirelessPair(hostName:hostModel:
+    /// outPath:resolveFileName:onReady:onPin:)`.
+    fn start_wireless_pair<'a>(
+        &'a self,
+        _args: WirelessPairStart<'a>,
+    ) -> GatewayFuture<'a, PairedDeviceRecord> {
+        Box::pin(async move { Err(unsupported("startWirelessPair")) })
+    }
+
+    /// Swift `triggerWirelessPair(targetIp:targetPort:
+    /// hostName:hostModel:outPath:resolveFileName:
+    /// onRequestPin:)`.
+    fn trigger_wireless_pair<'a>(
+        &'a self,
+        _args: WirelessPairTrigger<'a>,
+    ) -> GatewayFuture<'a, PairedDeviceRecord> {
+        Box::pin(async move { Err(unsupported("triggerWirelessPair")) })
+    }
 }
 
 /// Swift `afcGetFileInfo`'s return tuple.
@@ -327,6 +370,117 @@ pub trait DeviceGateway: Send + Sync {
 pub struct AfcFileInfo {
     pub is_directory: bool,
     pub file_size: i64,
+}
+
+/// Swift `PairedDeviceRecord` (DeviceGatewayAPI): the
+/// product of a wireless pairing. `pairing_file` is the
+/// parsed pairing file (Swift `any PairingFile`); over
+/// the FFI it crosses as its serialized content (diff
+/// list D-M8-10).
+#[derive(Debug, Clone)]
+pub struct PairedDeviceRecord {
+    pub name: String,
+    pub model: String,
+    pub pairing_file_path: String,
+    pub pairing_file: PairingFile,
+}
+
+/// Cancellation for one wireless pair operation (diff
+/// list D-M8-2): the service cancels on stop() and on
+/// same-slot/same-key re-entry; the gateway races its
+/// blocking waits against the token and fails with the
+/// Swift-shaped cancellation error. Swift's own
+/// Task.cancel cannot interrupt its blocking FFI calls
+/// — this token is the port's real cancellation, an
+/// explicit, recorded deviation.
+#[derive(Clone, Default)]
+pub struct PairCancelToken {
+    flag: Arc<AtomicBool>,
+    notify: Arc<tokio::sync::Notify>,
+}
+
+impl PairCancelToken {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn cancel(&self) {
+        self.flag.store(true, Ordering::SeqCst);
+        self.notify.notify_waiters();
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.flag.load(Ordering::SeqCst)
+    }
+
+    /// Resolves once the token is cancelled.
+    pub async fn cancelled(&self) {
+        loop {
+            if self.is_cancelled() {
+                return;
+            }
+            let notified = self.notify.notified();
+            tokio::pin!(notified);
+            // Register before re-checking the flag, so a
+            // cancel racing the check is not missed.
+            notified.as_mut().enable();
+            if self.is_cancelled() {
+                return;
+            }
+            notified.await;
+        }
+    }
+}
+
+/// The event surface a wireless pair operation reports
+/// through (Swift's gateway callbacks `onReady` /
+/// `onPin` / `onRequestPin` plus the `resolveFileName`
+/// closure, gathered into one object the service
+/// supplies).
+pub trait WirelessPairEvents: Send + Sync {
+    /// Swift gateway `onReady`: the pairable host is
+    /// prepared and listening; advertise
+    /// (service_id, port, txt_records).
+    fn on_ready(&self, service_id: &str, port: u16, txt_records: &[(String, String)]);
+
+    /// Swift gateway `onPin`: the host-generated PIN to
+    /// show the user (start flow).
+    fn on_pin(&self, pin: &str);
+
+    /// Swift gateway `onRequestPin`'s answer path:
+    /// resolves with the PIN the user entered for the
+    /// device-displayed code (trigger flow). The
+    /// service answers "000000" itself when the App has
+    /// no PIN handler (behavior W6); the gateway owns
+    /// the 60-second wait limit (behavior G7).
+    fn request_pin<'a>(&'a self) -> GatewayFuture<'a, String>;
+
+    /// Swift's `resolveFileName(name, model)` closure:
+    /// `Some(file_name)` when a resolver is installed,
+    /// `None` for the default naming (behavior G11).
+    fn resolve_file_name(&self, name: &str, model: &str) -> Option<String>;
+}
+
+/// Arguments of [`DeviceGateway::start_wireless_pair`]
+/// (Swift `startWirelessPair`'s parameters).
+pub struct WirelessPairStart<'a> {
+    pub host_name: &'a str,
+    pub host_model: &'a str,
+    pub out_path: &'a str,
+    pub events: Arc<dyn WirelessPairEvents>,
+    pub cancel: PairCancelToken,
+}
+
+/// Arguments of [`DeviceGateway::trigger_wireless_pair`]
+/// (Swift `triggerWirelessPair`'s parameters).
+pub struct WirelessPairTrigger<'a> {
+    pub target_ip: &'a str,
+    pub target_port: u16,
+    pub host_name: &'a str,
+    pub host_model: &'a str,
+    pub out_path: &'a str,
+    pub events: Arc<dyn WirelessPairEvents>,
+    pub cancel: PairCancelToken,
 }
 
 /// Swift `DeviceProvider`: a level of indirection so subsystems

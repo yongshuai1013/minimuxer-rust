@@ -18,7 +18,8 @@ mm-rp = { path = "../mm-rp" }
 plist = "1"
 rustls = "0.23"
 tokio-rustls = "0.26"
-tokio = { version = "1.44", features = ["rt", "sync", "time"] }
+tokio = { version = "1.44", features = ["rt", "sync", "time", "macros"] }
+libc = "0.2"
 # Exact pin (M7, D-M7-2): a caret requirement would let
 # cargo unify this with mm-rp's idevice 0.1.68 into one crate.
 idevice = { version = "=0.1.29", features = ["full"] }

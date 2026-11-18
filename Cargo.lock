@@ -1954,6 +1954,7 @@ name = "mm-gateway"
 version = "0.1.0"
 dependencies = [
  "idevice 0.1.29",
+ "libc",
  "mm-common",
  "mm-rp",
  "plist",

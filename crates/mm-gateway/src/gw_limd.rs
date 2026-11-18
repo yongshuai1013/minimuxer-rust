@@ -1065,6 +1065,35 @@ impl DeviceGateway for LibimobiledeviceGateway {
         })
     }
 
+    // Behavior G12: Swift's limd backend throws
+    // unsupportedOperation for both wireless pair entry
+    // points, with these reasons verbatim — the port
+    // keeps the same shape rather than pretending a
+    // second implementation (diff list §1).
+    fn start_wireless_pair<'a>(
+        &'a self,
+        _args: crate::gateway::WirelessPairStart<'a>,
+    ) -> GatewayFuture<'a, crate::gateway::PairedDeviceRecord> {
+        Box::pin(async move {
+            Err(gw_error(
+                DeviceGatewayCode::UnsupportedOperation,
+                "startWirelessPair (RemotePairing is not supported on pure Lockdown gateway)",
+            ))
+        })
+    }
+
+    fn trigger_wireless_pair<'a>(
+        &'a self,
+        _args: crate::gateway::WirelessPairTrigger<'a>,
+    ) -> GatewayFuture<'a, crate::gateway::PairedDeviceRecord> {
+        Box::pin(async move {
+            Err(gw_error(
+                DeviceGatewayCode::UnsupportedOperation,
+                "triggerWirelessPair (RemotePairing is not supported on pure Lockdown gateway)",
+            ))
+        })
+    }
+
     fn afc_list_directory<'a>(
         &'a self,
         bundle_id: &'a str,
