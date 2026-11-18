@@ -11,6 +11,7 @@ on:
   workflow_dispatch:
   push:
     branches: [rust-rewrite]
+    tags: ['rust-v*']
     paths:
       - 'crates/**'
       - 'Cargo.toml'
@@ -130,3 +131,19 @@ jobs:
             build/MinimuxerRust.xcframework.zip.sha256
             crates/mm-ffi/generated/minimuxer_rust.swift
             crates/mm-ffi/generated/SwiftBridgeCore.swift
+
+      # Tag builds (rust-v<semver>) publish the xcframework zip as a
+      # GitHub Release asset; Common/Package.swift pins that asset by
+      # URL + checksum (DESIGN section 6 release flow).
+      - name: Publish Release asset (tag builds)
+        if: startsWith(github.ref, 'refs/tags/rust-v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "${{ github.ref_name }}" >/dev/null 2>&1 || \
+            gh release create "${{ github.ref_name }}" \
+              --title "${{ github.ref_name }}" \
+              --notes "MinimuxerRust.xcframework for the Swift shell binaryTarget (DESIGN section 6)."
+          gh release upload "${{ github.ref_name }}" \
+            build/MinimuxerRust.xcframework.zip \
+            build/MinimuxerRust.xcframework.zip.sha256 --clobber
