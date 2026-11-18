@@ -86,20 +86,20 @@ jobs:
           HDRS="$GITHUB_WORKSPACE/crates/mm-ffi/generated"
           cp "$HDRS/minimuxer_rust.h" "$HDRS/SwiftBridgeCore.h" inc/
           printf 'module minimuxer_rust {\n  header "minimuxer_rust.h"\n  header "SwiftBridgeCore.h"\n  export *\n}\n' > inc/module.modulemap
-          cat inc/module.modulemap
           for MODE in wmo plain onone; do
             case $MODE in
               wmo) OPTS="-O -whole-module-optimization";;
               plain) OPTS="-O";;
               onone) OPTS="-Onone";;
             esac
-            mkdir -p out-$MODE
-            xcrun swiftc $OPTS -emit-object -module-name MinimuxerRustBindings -I inc minimuxer_rust.swift SwiftBridgeCore.swift ShellSinks.swift -output-file-map /dev/null 2>&1 | head -8 || true
-            mv minimuxer_rust.o SwiftBridgeCore.o ShellSinks.o out-$MODE/ 2>/dev/null || true
-            echo "== $MODE: MmEventSink symbols in minimuxer_rust.o =="
-            nm out-$MODE/minimuxer_rust.o 2>/dev/null | grep -i "MmEventSink" | head -8 || true
-            echo "== $MODE: swift_bridge symbol count in minimuxer_rust.o =="
-            nm out-$MODE/minimuxer_rust.o 2>/dev/null | grep -c "swift_bridge" || true
+            mkdir -p out-$MODE && cd out-$MODE
+            xcrun swiftc $OPTS -emit-object -module-name MinimuxerRustBindings -I ../inc ../minimuxer_rust.swift ../SwiftBridgeCore.swift ../ShellSinks.swift 2>&1 | head -8 || true
+            ls -la *.o || true
+            echo "== $MODE: MmEventSink symbols across objects =="
+            nm *.o 2>/dev/null | grep -i "MmEventSink" | head -10 || true
+            echo "== $MODE: swift_bridge symbol count across objects =="
+            nm *.o 2>/dev/null | grep -c "swift_bridge" || true
+            cd ..
           done
 
   xcframework:
