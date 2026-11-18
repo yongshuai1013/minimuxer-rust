@@ -883,6 +883,84 @@ class CbWrapper$mm_core_afc_get_file_info {
         self.cb = cb
     }
 }
+public func mm_emproxy_set_handshake_client<GenericIntoRustString: IntoRustString>(_ host: GenericIntoRustString, _ port: UInt16, _ enabled: Bool) {
+    __swift_bridge__$mm_emproxy_set_handshake_client({ let rustString = host.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), port, enabled)
+}
+public func mm_emproxy_start<GenericIntoRustString: IntoRustString>(_ host: GenericIntoRustString, _ port: UInt16) async -> MmOutcome {
+    func onComplete(cbWrapperPtr: UnsafeMutableRawPointer?, rustFnRetVal: __swift_bridge__$MmOutcome) {
+        let wrapper = Unmanaged<CbWrapper$mm_emproxy_start>.fromOpaque(cbWrapperPtr!).takeRetainedValue()
+        wrapper.cb(.success(rustFnRetVal.intoSwiftRepr()))
+    }
+
+    return await withCheckedContinuation({ (continuation: CheckedContinuation<MmOutcome, Never>) in
+        let callback = { rustFnRetVal in
+            continuation.resume(with: rustFnRetVal)
+        }
+
+        let wrapper = CbWrapper$mm_emproxy_start(cb: callback)
+        let wrapperPtr = Unmanaged.passRetained(wrapper).toOpaque()
+
+        __swift_bridge__$mm_emproxy_start(wrapperPtr, onComplete, { let rustString = host.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), port)
+    })
+}
+class CbWrapper$mm_emproxy_start {
+    var cb: (Result<MmOutcome, Never>) -> ()
+
+    public init(cb: @escaping (Result<MmOutcome, Never>) -> ()) {
+        self.cb = cb
+    }
+}
+public func mm_emproxy_start_default() async -> MmOutcome {
+    func onComplete(cbWrapperPtr: UnsafeMutableRawPointer?, rustFnRetVal: __swift_bridge__$MmOutcome) {
+        let wrapper = Unmanaged<CbWrapper$mm_emproxy_start_default>.fromOpaque(cbWrapperPtr!).takeRetainedValue()
+        wrapper.cb(.success(rustFnRetVal.intoSwiftRepr()))
+    }
+
+    return await withCheckedContinuation({ (continuation: CheckedContinuation<MmOutcome, Never>) in
+        let callback = { rustFnRetVal in
+            continuation.resume(with: rustFnRetVal)
+        }
+
+        let wrapper = CbWrapper$mm_emproxy_start_default(cb: callback)
+        let wrapperPtr = Unmanaged.passRetained(wrapper).toOpaque()
+
+        __swift_bridge__$mm_emproxy_start_default(wrapperPtr, onComplete)
+    })
+}
+class CbWrapper$mm_emproxy_start_default {
+    var cb: (Result<MmOutcome, Never>) -> ()
+
+    public init(cb: @escaping (Result<MmOutcome, Never>) -> ()) {
+        self.cb = cb
+    }
+}
+public func mm_emproxy_stop() async -> MmOutcome {
+    func onComplete(cbWrapperPtr: UnsafeMutableRawPointer?, rustFnRetVal: __swift_bridge__$MmOutcome) {
+        let wrapper = Unmanaged<CbWrapper$mm_emproxy_stop>.fromOpaque(cbWrapperPtr!).takeRetainedValue()
+        wrapper.cb(.success(rustFnRetVal.intoSwiftRepr()))
+    }
+
+    return await withCheckedContinuation({ (continuation: CheckedContinuation<MmOutcome, Never>) in
+        let callback = { rustFnRetVal in
+            continuation.resume(with: rustFnRetVal)
+        }
+
+        let wrapper = CbWrapper$mm_emproxy_stop(cb: callback)
+        let wrapperPtr = Unmanaged.passRetained(wrapper).toOpaque()
+
+        __swift_bridge__$mm_emproxy_stop(wrapperPtr, onComplete)
+    })
+}
+class CbWrapper$mm_emproxy_stop {
+    var cb: (Result<MmOutcome, Never>) -> ()
+
+    public init(cb: @escaping (Result<MmOutcome, Never>) -> ()) {
+        self.cb = cb
+    }
+}
+public func mm_emproxy_is_running() -> Bool {
+    __swift_bridge__$mm_emproxy_is_running()
+}
 public func mm_core_set_params(_ backend: Optional<MmGatewayBackend>, _ remote_pairing_port: Optional<UInt16>, _ device_probe_timeout: Optional<Int32>) {
     __swift_bridge__$mm_core_set_params(__swift_bridge__$Option$MmGatewayBackend.fromSwiftRepr(backend), remote_pairing_port.intoFfiRepr(), device_probe_timeout.intoFfiRepr())
 }

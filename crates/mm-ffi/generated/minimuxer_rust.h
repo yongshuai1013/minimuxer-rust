@@ -154,6 +154,11 @@ void __swift_bridge__$mm_core_dump_profiles(void* callback_wrapper, void __swift
 void __swift_bridge__$mm_core_afc_list_directory(void* callback_wrapper, void __swift_bridge__$mm_core_afc_list_directory$async(void* callback_wrapper, struct __swift_bridge__$MmListOutcome ret), void* bundle_id, void* path);
 void __swift_bridge__$mm_core_afc_read_file(void* callback_wrapper, void __swift_bridge__$mm_core_afc_read_file$async(void* callback_wrapper, struct __swift_bridge__$MmDataOutcome ret), void* bundle_id, void* path);
 void __swift_bridge__$mm_core_afc_get_file_info(void* callback_wrapper, void __swift_bridge__$mm_core_afc_get_file_info$async(void* callback_wrapper, struct __swift_bridge__$MmAfcFileInfoOutcome ret), void* bundle_id, void* path);
+void __swift_bridge__$mm_emproxy_set_handshake_client(void* host, uint16_t port, bool enabled);
+void __swift_bridge__$mm_emproxy_start(void* callback_wrapper, void __swift_bridge__$mm_emproxy_start$async(void* callback_wrapper, struct __swift_bridge__$MmOutcome ret), void* host, uint16_t port);
+void __swift_bridge__$mm_emproxy_start_default(void* callback_wrapper, void __swift_bridge__$mm_emproxy_start_default$async(void* callback_wrapper, struct __swift_bridge__$MmOutcome ret));
+void __swift_bridge__$mm_emproxy_stop(void* callback_wrapper, void __swift_bridge__$mm_emproxy_stop$async(void* callback_wrapper, struct __swift_bridge__$MmOutcome ret));
+bool __swift_bridge__$mm_emproxy_is_running(void);
 void __swift_bridge__$mm_core_set_params(struct __swift_bridge__$Option$MmGatewayBackend backend, struct __private__OptionU16 remote_pairing_port, struct __private__OptionI32 device_probe_timeout);
 struct __swift_bridge__$MmCoreStatus __swift_bridge__$mm_core_status(void);
 void __swift_bridge__$mm_core_set_logging(bool enabled);

@@ -320,6 +320,13 @@ mod ffi {
             bundle_id: String,
             path: String,
         ) -> MmAfcFileInfoOutcome;
+        // mm-emproxy (M6): the EMProxyAPI surface over the
+        // instance held by the core.
+        fn mm_emproxy_set_handshake_client(host: String, port: u16, enabled: bool);
+        async fn mm_emproxy_start(host: String, port: u16) -> MmOutcome;
+        async fn mm_emproxy_start_default() -> MmOutcome;
+        async fn mm_emproxy_stop() -> MmOutcome;
+        fn mm_emproxy_is_running() -> bool;
         fn mm_core_set_params(
             backend: Option<MmGatewayBackend>,
             remote_pairing_port: Option<u16>,
@@ -1484,6 +1491,55 @@ fn mm_core_last_beat_successful() -> bool {
 }
 
 // ---------------------------------------------------------------------------
+// mm-emproxy (M6): the EMProxyAPI surface. The instance lives on
+// the core (Swift `MinimuxerImpl.emproxy`); the App layer drives
+// it — configure the handshake client, start (explicit bind or
+// the 127.0.0.1:51820 default), stop. Errors cross as the
+// EMProxyError MmErrorInfo shape inside MmOutcome.
+// ---------------------------------------------------------------------------
+
+fn mm_emproxy_set_handshake_client(host: String, port: u16, enabled: bool) {
+    core_globals()
+        .core
+        .emproxy()
+        .set_handshake_client(&host, port, enabled);
+}
+
+async fn mm_emproxy_start(host: String, port: u16) -> ffi::MmOutcome {
+    let core = core_globals().core.clone();
+    outcome_from(
+        spawn_gateway(async move {
+            core.emproxy()
+                .start(&host, port)
+                .await
+                .map_err(|e| e.to_info())
+        })
+        .await,
+    )
+}
+
+async fn mm_emproxy_start_default() -> ffi::MmOutcome {
+    let core = core_globals().core.clone();
+    outcome_from(
+        spawn_gateway(async move {
+            core.emproxy().start_default().await.map_err(|e| e.to_info())
+        })
+        .await,
+    )
+}
+
+async fn mm_emproxy_stop() -> ffi::MmOutcome {
+    let core = core_globals().core.clone();
+    outcome_from(
+        spawn_gateway(async move { core.emproxy().stop().map_err(|e| e.to_info()) }).await,
+    )
+}
+
+fn mm_emproxy_is_running() -> bool {
+    core_globals().core.emproxy().is_running()
+}
+
+// ---------------------------------------------------------------------------
 // Host-test link stubs: the `__swift_bridge__$...` C symbols for the
 // extern Swift types are provided by the generated Swift in the real
 // build. Host tests never hold Swift objects (no sink is registered,
@@ -1638,6 +1694,40 @@ mod tests {
         assert_eq!(mm_gateway::CRATE_NAME, "mm-gateway");
         assert_eq!(mm_emproxy::CRATE_NAME, "mm-emproxy");
         assert_eq!(mm_core::CRATE_NAME, "mm-core");
+    }
+
+    #[test]
+    fn ffi_emproxy_face_shapes() {
+        // The core-held instance starts unconfigured and stopped.
+        assert!(!mm_emproxy_is_running());
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        // Stop before start: EMProxyError.serverNotRunning.
+        let early_stop = rt.block_on(mm_emproxy_stop());
+        assert!(!early_stop.success);
+        assert_eq!(early_stop.error.domain, "EMProxyError");
+        assert_eq!(early_stop.error.code, "serverNotRunning");
+        // Configure (disabled, empty host → candidate probe; the
+        // host has no utun interfaces, so the probe skips fast).
+        mm_emproxy_set_handshake_client(String::new(), 0, false);
+        assert_eq!(
+            core_globals().core.emproxy().handshake_config(),
+            Some(mm_emproxy::HandshakeConfig {
+                host: String::new(),
+                port: 0,
+                enabled: false,
+            })
+        );
+        // Start on a test port, observe, stop.
+        let started = rt.block_on(mm_emproxy_start("127.0.0.1".to_string(), 26421));
+        assert!(
+            started.success,
+            "start failed: {} {}",
+            started.error.domain, started.error.code
+        );
+        assert!(mm_emproxy_is_running());
+        let stopped = rt.block_on(mm_emproxy_stop());
+        assert!(stopped.success);
+        assert!(!mm_emproxy_is_running());
     }
 
     #[test]
