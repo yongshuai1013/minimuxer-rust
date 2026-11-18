@@ -58,6 +58,25 @@ typedef struct __swift_bridge__$MmServiceOutcome { bool success; void* service_n
 typedef struct __swift_bridge__$Option$MmServiceOutcome { bool is_some; __swift_bridge__$MmServiceOutcome val; } __swift_bridge__$Option$MmServiceOutcome;
 typedef struct __swift_bridge__$MmReadyOutcome { bool success; bool ready; struct __swift_bridge__$MmErrorInfo error; } __swift_bridge__$MmReadyOutcome;
 typedef struct __swift_bridge__$Option$MmReadyOutcome { bool is_some; __swift_bridge__$MmReadyOutcome val; } __swift_bridge__$Option$MmReadyOutcome;
+typedef struct __swift_bridge__$MmListOutcome { bool success; void* entries; struct __swift_bridge__$MmErrorInfo error; } __swift_bridge__$MmListOutcome;
+typedef struct __swift_bridge__$Option$MmListOutcome { bool is_some; __swift_bridge__$MmListOutcome val; } __swift_bridge__$Option$MmListOutcome;
+typedef struct __swift_bridge__$MmDataOutcome { bool success; void* data; struct __swift_bridge__$MmErrorInfo error; } __swift_bridge__$MmDataOutcome;
+typedef struct __swift_bridge__$Option$MmDataOutcome { bool is_some; __swift_bridge__$MmDataOutcome val; } __swift_bridge__$Option$MmDataOutcome;
+typedef struct __swift_bridge__$MmAfcFileInfoOutcome { bool success; bool is_directory; int64_t file_size; struct __swift_bridge__$MmErrorInfo error; } __swift_bridge__$MmAfcFileInfoOutcome;
+typedef struct __swift_bridge__$Option$MmAfcFileInfoOutcome { bool is_some; __swift_bridge__$MmAfcFileInfoOutcome val; } __swift_bridge__$Option$MmAfcFileInfoOutcome;
+typedef enum __swift_bridge__$MmProfileDumpModeTag { __swift_bridge__$MmProfileDumpMode$Raw, __swift_bridge__$MmProfileDumpMode$Zip, } __swift_bridge__$MmProfileDumpModeTag;
+typedef struct __swift_bridge__$MmProfileDumpMode { __swift_bridge__$MmProfileDumpModeTag tag; } __swift_bridge__$MmProfileDumpMode;
+typedef struct __swift_bridge__$Option$MmProfileDumpMode { bool is_some; __swift_bridge__$MmProfileDumpMode val; } __swift_bridge__$Option$MmProfileDumpMode;
+
+void* __swift_bridge__$Vec_MmProfileDumpMode$new(void);
+void __swift_bridge__$Vec_MmProfileDumpMode$drop(void* vec_ptr);
+void __swift_bridge__$Vec_MmProfileDumpMode$push(void* vec_ptr, __swift_bridge__$MmProfileDumpMode item);
+__swift_bridge__$Option$MmProfileDumpMode __swift_bridge__$Vec_MmProfileDumpMode$pop(void* vec_ptr);
+__swift_bridge__$Option$MmProfileDumpMode __swift_bridge__$Vec_MmProfileDumpMode$get(void* vec_ptr, uintptr_t index);
+__swift_bridge__$Option$MmProfileDumpMode __swift_bridge__$Vec_MmProfileDumpMode$get_mut(void* vec_ptr, uintptr_t index);
+uintptr_t __swift_bridge__$Vec_MmProfileDumpMode$len(void* vec_ptr);
+void* __swift_bridge__$Vec_MmProfileDumpMode$as_ptr(void* vec_ptr);
+
 typedef enum __swift_bridge__$MmCoreStatusTag { __swift_bridge__$MmCoreStatus$Started, __swift_bridge__$MmCoreStatus$InProgress, __swift_bridge__$MmCoreStatus$Stopped, } __swift_bridge__$MmCoreStatusTag;
 typedef struct __swift_bridge__$MmCoreStatus { __swift_bridge__$MmCoreStatusTag tag; } __swift_bridge__$MmCoreStatus;
 typedef struct __swift_bridge__$Option$MmCoreStatus { bool is_some; __swift_bridge__$MmCoreStatus val; } __swift_bridge__$Option$MmCoreStatus;
@@ -121,6 +140,20 @@ void __swift_bridge__$mm_core_is_ready(void* callback_wrapper, void __swift_brid
 void __swift_bridge__$mm_core_fetch_udid(void* callback_wrapper, void __swift_bridge__$mm_core_fetch_udid$async(void* callback_wrapper, struct __swift_bridge__$MmStringOutcome ret));
 void __swift_bridge__$mm_core_is_ddi_mounted(void* callback_wrapper, void __swift_bridge__$mm_core_is_ddi_mounted$async(void* callback_wrapper, struct __swift_bridge__$MmReadyOutcome ret));
 void __swift_bridge__$mm_core_mount_ddi(void* callback_wrapper, void __swift_bridge__$mm_core_mount_ddi$async(void* callback_wrapper, struct __swift_bridge__$MmReadyOutcome ret), void* docs_path);
+void __swift_bridge__$mm_core_send_ipa_afc(void* callback_wrapper, void __swift_bridge__$mm_core_send_ipa_afc$async(void* callback_wrapper, struct __swift_bridge__$MmOutcome ret), void* bundle_id, void* ipa);
+void __swift_bridge__$mm_core_send_app_bundle_afc(void* callback_wrapper, void __swift_bridge__$mm_core_send_app_bundle_afc$async(void* callback_wrapper, struct __swift_bridge__$MmOutcome ret), void* bundle_id, void* app_path);
+void __swift_bridge__$mm_core_install_ipa(void* callback_wrapper, void __swift_bridge__$mm_core_install_ipa$async(void* callback_wrapper, struct __swift_bridge__$MmOutcome ret), void* bundle_id);
+void __swift_bridge__$mm_core_install_app_bundle(void* callback_wrapper, void __swift_bridge__$mm_core_install_app_bundle$async(void* callback_wrapper, struct __swift_bridge__$MmOutcome ret), void* bundle_id, void* app_name);
+void __swift_bridge__$mm_core_remove_app(void* callback_wrapper, void __swift_bridge__$mm_core_remove_app$async(void* callback_wrapper, struct __swift_bridge__$MmOutcome ret), void* bundle_id);
+void __swift_bridge__$mm_core_wipe_container(void* callback_wrapper, void __swift_bridge__$mm_core_wipe_container$async(void* callback_wrapper, struct __swift_bridge__$MmOutcome ret), void* bundle_id);
+void __swift_bridge__$mm_core_debug_app(void* callback_wrapper, void __swift_bridge__$mm_core_debug_app$async(void* callback_wrapper, struct __swift_bridge__$MmOutcome ret), void* bundle_id);
+void __swift_bridge__$mm_core_attach_debugger(void* callback_wrapper, void __swift_bridge__$mm_core_attach_debugger$async(void* callback_wrapper, struct __swift_bridge__$MmOutcome ret), uint32_t pid);
+void __swift_bridge__$mm_core_install_profile(void* callback_wrapper, void __swift_bridge__$mm_core_install_profile$async(void* callback_wrapper, struct __swift_bridge__$MmOutcome ret), void* profile);
+void __swift_bridge__$mm_core_remove_profile(void* callback_wrapper, void __swift_bridge__$mm_core_remove_profile$async(void* callback_wrapper, struct __swift_bridge__$MmOutcome ret), void* profile_id);
+void __swift_bridge__$mm_core_dump_profiles(void* callback_wrapper, void __swift_bridge__$mm_core_dump_profiles$async(void* callback_wrapper, struct __swift_bridge__$MmStringOutcome ret), void* docs_path, struct __swift_bridge__$MmProfileDumpMode mode);
+void __swift_bridge__$mm_core_afc_list_directory(void* callback_wrapper, void __swift_bridge__$mm_core_afc_list_directory$async(void* callback_wrapper, struct __swift_bridge__$MmListOutcome ret), void* bundle_id, void* path);
+void __swift_bridge__$mm_core_afc_read_file(void* callback_wrapper, void __swift_bridge__$mm_core_afc_read_file$async(void* callback_wrapper, struct __swift_bridge__$MmDataOutcome ret), void* bundle_id, void* path);
+void __swift_bridge__$mm_core_afc_get_file_info(void* callback_wrapper, void __swift_bridge__$mm_core_afc_get_file_info$async(void* callback_wrapper, struct __swift_bridge__$MmAfcFileInfoOutcome ret), void* bundle_id, void* path);
 void __swift_bridge__$mm_core_set_params(struct __swift_bridge__$Option$MmGatewayBackend backend, struct __private__OptionU16 remote_pairing_port, struct __private__OptionI32 device_probe_timeout);
 struct __swift_bridge__$MmCoreStatus __swift_bridge__$mm_core_status(void);
 void __swift_bridge__$mm_core_set_logging(bool enabled);

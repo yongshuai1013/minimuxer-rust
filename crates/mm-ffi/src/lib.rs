@@ -165,6 +165,38 @@ mod ffi {
         error: MmErrorInfo,
     }
 
+    // Outcome of an AFC directory listing.
+    #[swift_bridge(swift_repr = "struct")]
+    struct MmListOutcome {
+        success: bool,
+        entries: Vec<String>,
+        error: MmErrorInfo,
+    }
+
+    // Outcome of an AFC file read.
+    #[swift_bridge(swift_repr = "struct")]
+    struct MmDataOutcome {
+        success: bool,
+        data: Vec<u8>,
+        error: MmErrorInfo,
+    }
+
+    // Outcome of an AFC file-info query (FFI twin of
+    // `mm_gateway::AfcFileInfo`).
+    #[swift_bridge(swift_repr = "struct")]
+    struct MmAfcFileInfoOutcome {
+        success: bool,
+        is_directory: bool,
+        file_size: i64,
+        error: MmErrorInfo,
+    }
+
+    // FFI twin of `mm_core::ProfileDumpMode`.
+    enum MmProfileDumpMode {
+        Raw,
+        Zip,
+    }
+
     // FFI twin of `mm_core::CoreStatus` (Swift
     // `MinimuxerStatus`).
     enum MmCoreStatus {
@@ -256,6 +288,38 @@ mod ffi {
         async fn mm_core_fetch_udid() -> MmStringOutcome;
         async fn mm_core_is_ddi_mounted() -> MmReadyOutcome;
         async fn mm_core_mount_ddi(docs_path: String) -> MmReadyOutcome;
+        async fn mm_core_send_ipa_afc(bundle_id: String, ipa: Vec<u8>) -> MmOutcome;
+        async fn mm_core_send_app_bundle_afc(
+            bundle_id: String,
+            app_path: String,
+        ) -> MmOutcome;
+        async fn mm_core_install_ipa(bundle_id: String) -> MmOutcome;
+        async fn mm_core_install_app_bundle(
+            bundle_id: String,
+            app_name: String,
+        ) -> MmOutcome;
+        async fn mm_core_remove_app(bundle_id: String) -> MmOutcome;
+        async fn mm_core_wipe_container(bundle_id: String) -> MmOutcome;
+        async fn mm_core_debug_app(bundle_id: String) -> MmOutcome;
+        async fn mm_core_attach_debugger(pid: u32) -> MmOutcome;
+        async fn mm_core_install_profile(profile: Vec<u8>) -> MmOutcome;
+        async fn mm_core_remove_profile(profile_id: String) -> MmOutcome;
+        async fn mm_core_dump_profiles(
+            docs_path: String,
+            mode: MmProfileDumpMode,
+        ) -> MmStringOutcome;
+        async fn mm_core_afc_list_directory(
+            bundle_id: String,
+            path: String,
+        ) -> MmListOutcome;
+        async fn mm_core_afc_read_file(
+            bundle_id: String,
+            path: String,
+        ) -> MmDataOutcome;
+        async fn mm_core_afc_get_file_info(
+            bundle_id: String,
+            path: String,
+        ) -> MmAfcFileInfoOutcome;
         fn mm_core_set_params(
             backend: Option<MmGatewayBackend>,
             remote_pairing_port: Option<u16>,
@@ -1192,6 +1256,201 @@ async fn mm_core_mount_ddi(docs_path: String) -> ffi::MmReadyOutcome {
     )
 }
 
+
+// ---------------------------------------------------------------------------
+// mm-core M5 face: install pipeline, profiles, AFC, debug.
+// Every operation flattens the core's MinimuxerError to its
+// info shape at the boundary, like the M4 face.
+// ---------------------------------------------------------------------------
+
+fn list_outcome_from(
+    result: Result<Vec<String>, mm_common::MmErrorInfo>,
+) -> ffi::MmListOutcome {
+    match result {
+        Ok(entries) => ffi::MmListOutcome {
+            success: true,
+            entries,
+            error: empty_error(),
+        },
+        Err(e) => ffi::MmListOutcome {
+            success: false,
+            entries: Vec::new(),
+            error: e.into(),
+        },
+    }
+}
+
+fn data_outcome_from(
+    result: Result<Vec<u8>, mm_common::MmErrorInfo>,
+) -> ffi::MmDataOutcome {
+    match result {
+        Ok(data) => ffi::MmDataOutcome {
+            success: true,
+            data,
+            error: empty_error(),
+        },
+        Err(e) => ffi::MmDataOutcome {
+            success: false,
+            data: Vec::new(),
+            error: e.into(),
+        },
+    }
+}
+
+fn afc_info_outcome_from(
+    result: Result<mm_gateway::AfcFileInfo, mm_common::MmErrorInfo>,
+) -> ffi::MmAfcFileInfoOutcome {
+    match result {
+        Ok(info) => ffi::MmAfcFileInfoOutcome {
+            success: true,
+            is_directory: info.is_directory,
+            file_size: info.file_size,
+            error: empty_error(),
+        },
+        Err(e) => ffi::MmAfcFileInfoOutcome {
+            success: false,
+            is_directory: false,
+            file_size: 0,
+            error: e.into(),
+        },
+    }
+}
+
+impl ffi::MmProfileDumpMode {
+    fn to_core(self) -> mm_core::ProfileDumpMode {
+        match self {
+            ffi::MmProfileDumpMode::Raw => mm_core::ProfileDumpMode::Raw,
+            ffi::MmProfileDumpMode::Zip => mm_core::ProfileDumpMode::Zip,
+        }
+    }
+}
+
+/// Runs one core M5 operation on the global runtime.
+async fn spawn_core<T, F>(fut: F) -> Result<T, mm_common::MmErrorInfo>
+where
+    F: std::future::Future<Output = Result<T, mm_common::MinimuxerError>>
+        + Send
+        + 'static,
+    T: Send + 'static,
+{
+    spawn_gateway(async move { fut.await.map_err(|e| e.to_info()) }).await
+}
+
+async fn mm_core_send_ipa_afc(bundle_id: String, ipa: Vec<u8>) -> ffi::MmOutcome {
+    let core = core_globals().core.clone();
+    outcome_from(
+        spawn_core(async move { core.send_ipa_afc(&bundle_id, &ipa).await }).await,
+    )
+}
+
+async fn mm_core_send_app_bundle_afc(
+    bundle_id: String,
+    app_path: String,
+) -> ffi::MmOutcome {
+    let core = core_globals().core.clone();
+    outcome_from(
+        spawn_core(async move { core.send_app_bundle_afc(&bundle_id, &app_path).await })
+            .await,
+    )
+}
+
+async fn mm_core_install_ipa(bundle_id: String) -> ffi::MmOutcome {
+    let core = core_globals().core.clone();
+    outcome_from(spawn_core(async move { core.install_ipa(&bundle_id).await }).await)
+}
+
+async fn mm_core_install_app_bundle(
+    bundle_id: String,
+    app_name: String,
+) -> ffi::MmOutcome {
+    let core = core_globals().core.clone();
+    outcome_from(
+        spawn_core(async move { core.install_app_bundle(&bundle_id, &app_name).await })
+            .await,
+    )
+}
+
+async fn mm_core_remove_app(bundle_id: String) -> ffi::MmOutcome {
+    let core = core_globals().core.clone();
+    outcome_from(spawn_core(async move { core.remove_app(&bundle_id).await }).await)
+}
+
+async fn mm_core_wipe_container(bundle_id: String) -> ffi::MmOutcome {
+    let core = core_globals().core.clone();
+    outcome_from(
+        spawn_core(async move { core.wipe_container(&bundle_id).await }).await,
+    )
+}
+
+async fn mm_core_debug_app(bundle_id: String) -> ffi::MmOutcome {
+    let core = core_globals().core.clone();
+    outcome_from(spawn_core(async move { core.debug_app(&bundle_id).await }).await)
+}
+
+async fn mm_core_attach_debugger(pid: u32) -> ffi::MmOutcome {
+    let core = core_globals().core.clone();
+    outcome_from(spawn_core(async move { core.attach_debugger(pid).await }).await)
+}
+
+async fn mm_core_install_profile(profile: Vec<u8>) -> ffi::MmOutcome {
+    let core = core_globals().core.clone();
+    outcome_from(
+        spawn_core(async move { core.install_provisioning_profile(&profile).await })
+            .await,
+    )
+}
+
+async fn mm_core_remove_profile(profile_id: String) -> ffi::MmOutcome {
+    let core = core_globals().core.clone();
+    outcome_from(
+        spawn_core(async move { core.remove_provisioning_profile(&profile_id).await })
+            .await,
+    )
+}
+
+async fn mm_core_dump_profiles(
+    docs_path: String,
+    mode: ffi::MmProfileDumpMode,
+) -> ffi::MmStringOutcome {
+    let core = core_globals().core.clone();
+    string_outcome_from(
+        spawn_core(async move { core.dump_profiles(&docs_path, mode.to_core()).await })
+            .await,
+    )
+}
+
+async fn mm_core_afc_list_directory(
+    bundle_id: String,
+    path: String,
+) -> ffi::MmListOutcome {
+    let core = core_globals().core.clone();
+    list_outcome_from(
+        spawn_core(async move { core.afc_list_directory(&bundle_id, &path).await })
+            .await,
+    )
+}
+
+async fn mm_core_afc_read_file(
+    bundle_id: String,
+    path: String,
+) -> ffi::MmDataOutcome {
+    let core = core_globals().core.clone();
+    data_outcome_from(
+        spawn_core(async move { core.afc_read_file(&bundle_id, &path).await }).await,
+    )
+}
+
+async fn mm_core_afc_get_file_info(
+    bundle_id: String,
+    path: String,
+) -> ffi::MmAfcFileInfoOutcome {
+    let core = core_globals().core.clone();
+    afc_info_outcome_from(
+        spawn_core(async move { core.afc_get_file_info(&bundle_id, &path).await })
+            .await,
+    )
+}
+
 fn mm_core_set_params(
     backend: Option<ffi::MmGatewayBackend>,
     remote_pairing_port: Option<u16>,
@@ -1295,6 +1554,46 @@ mod tests {
     use super::*;
 
     const LOCKDOWN_XML: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\">\n<dict>\n<key>WiFiMACAddress</key>\n<string>AA:BB:CC:DD:EE:FF</string>\n<key>SystemBUID</key>\n<string>BUID-1</string>\n<key>RootPrivateKey</key>\n<data>AAECAw==</data>\n<key>HostPrivateKey</key>\n<data>AAECAw==</data>\n<key>HostID</key>\n<string>H1</string>\n<key>RootCertificate</key>\n<data>AAECAw==</data>\n<key>UDID</key>\n<string>UDID-1</string>\n<key>EscrowBag</key>\n<data>AAECAw==</data>\n<key>HostCertificate</key>\n<data>AAECAw==</data>\n<key>DeviceCertificate</key>\n<data>AAECAw==</data>\n</dict>\n</plist>\n";
+
+    #[test]
+    fn m5_outcome_helpers_carry_payloads_and_errors() {
+        let info = mm_common::MmErrorInfo::new("AfcError", "notFound", "gone");
+
+        let list = list_outcome_from(Ok(vec!["a".to_string()]));
+        assert!(list.success);
+        assert_eq!(list.entries, vec!["a".to_string()]);
+        let list_err = list_outcome_from(Err(info.clone()));
+        assert!(!list_err.success);
+        assert_eq!(list_err.error.code, "notFound");
+
+        let data = data_outcome_from(Ok(vec![1u8, 2, 3]));
+        assert!(data.success);
+        assert_eq!(data.data, vec![1u8, 2, 3]);
+        let data_err = data_outcome_from(Err(info.clone()));
+        assert!(!data_err.success);
+        assert!(data_err.data.is_empty());
+
+        let afc = afc_info_outcome_from(Ok(mm_gateway::AfcFileInfo {
+            is_directory: true,
+            file_size: -1,
+        }));
+        assert!(afc.success && afc.is_directory && afc.file_size == -1);
+        let afc_err = afc_info_outcome_from(Err(info));
+        assert!(!afc_err.success);
+        assert_eq!(afc_err.error.domain, "AfcError");
+    }
+
+    #[test]
+    fn m5_profile_dump_mode_maps_to_core() {
+        assert!(matches!(
+            ffi::MmProfileDumpMode::Raw.to_core(),
+            mm_core::ProfileDumpMode::Raw
+        ));
+        assert!(matches!(
+            ffi::MmProfileDumpMode::Zip.to_core(),
+            mm_core::ProfileDumpMode::Zip
+        ));
+    }
 
     #[test]
     fn version_is_nonempty() {
