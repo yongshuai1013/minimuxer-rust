@@ -1,3 +1,4 @@
+import minimuxer_rust
 import Foundation
 
 extension RustString {

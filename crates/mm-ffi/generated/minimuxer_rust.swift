@@ -1,3 +1,4 @@
+import minimuxer_rust
 public func mm_version() -> RustString {
     RustString(ptr: __swift_bridge__$mm_version())
 }
