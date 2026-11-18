@@ -126,3 +126,35 @@ public final class MmWirelessPairSink {
             ?? MmResolveOutcome(has_resolver: false, file_name: "".intoRustString())
     }
 }
+
+/// Linker anchor for the generated `@_cdecl` shims in
+/// minimuxer_rust.swift. Those functions are called only from
+/// the Rust staticlib; nothing on the Swift side references
+/// them, and the Xcode build's object merge dead-strips them,
+/// which left the App link with exactly the 20
+/// `__swift_bridge__$Mm*` symbols undefined (integration rounds
+/// 10-14; `@_used` on the shims alone did not survive the
+/// merge). Naming every shim here makes them reachable from a
+/// public root. The array is never read at runtime.
+public let mmBridgeShimAnchor: [Any] = [
+    __swift_bridge__MmEventSink_on_log,
+    __swift_bridge__MmEventSink_on_status,
+    __swift_bridge__MmEventSink__free,
+    __swift_bridge__MmConnectionConfig_set_tunnel_iface_ip,
+    __swift_bridge__MmConnectionConfig_set_tunnel_peer_ip,
+    __swift_bridge__MmConnectionConfig_set_tunnel_peer_subnet_mask,
+    __swift_bridge__MmConnectionConfig_set_tunnel_peer_reachable,
+    __swift_bridge__MmConnectionConfig_set_tunnel_iface_subnet_mask,
+    __swift_bridge__MmConnectionConfig_set_remote_reachable,
+    __swift_bridge__MmConnectionConfig_set_override_tunnel_peer_reachable,
+    __swift_bridge__MmConnectionConfig_get_connection_mode,
+    __swift_bridge__MmConnectionConfig_get_override_tunnel_peer_ip,
+    __swift_bridge__MmConnectionConfig_get_remote_server_ip,
+    __swift_bridge__MmConnectionConfig_request_service_port,
+    __swift_bridge__MmConnectionConfig__free,
+    __swift_bridge__MmWirelessPairSink_on_pin_received,
+    __swift_bridge__MmWirelessPairSink_on_ready_to_pair,
+    __swift_bridge__MmWirelessPairSink_request_pin,
+    __swift_bridge__MmWirelessPairSink_resolve_file_name,
+    __swift_bridge__MmWirelessPairSink__free,
+]
