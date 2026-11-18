@@ -33,7 +33,10 @@ final class MinimuxerNetworkImpl: NetworkObserverAPI {
     var isIKEv2IPSecAvailable: Bool { mm_net_snapshot().ipsec_available }
 
     var activeInterfaces: [LocalInterfaceInfo] {
-        mm_net_scan_interfaces().map { info in
+        // The bridge exposes the scan as count + indexed access
+        // (no Vec of shared structs in this swift-bridge version).
+        let count = mm_net_interface_count()
+        return (0..<count).compactMap { mm_net_interface_at($0) }.map { info in
             LocalInterfaceInfo(
                 name: info.name.toString(),
                 ip: info.ip.toString(),

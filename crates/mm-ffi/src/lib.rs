@@ -96,11 +96,12 @@ mod ffi {
         is_vpn: bool,
     }
 
-    // A fresh interface scan plus the satisfaction predicates
-    // (Swift `NetworkObserverService` getters).
+    // The satisfaction predicates (Swift `NetworkObserverService`
+    // getters). The interface list itself is NOT part of this struct:
+    // it is exposed via mm_net_interface_count / mm_net_interface_at
+    // below (see the note there).
     #[swift_bridge(swift_repr = "struct")]
     struct MmNetSnapshot {
-        interfaces: Vec<MmInterfaceInfo>,
         wifi_satisfied: bool,
         wired_satisfied: bool,
         usb_satisfied: bool,
@@ -251,7 +252,13 @@ mod ffi {
         fn mm_emit_status(success: bool, domain: String, code: String, reason: String);
 
         // mm-net (M2).
-        fn mm_net_scan_interfaces() -> Vec<MmInterfaceInfo>;
+        // NOTE: no Vec<MmInterfaceInfo> return here — this
+        // swift-bridge version emits no Vec C functions and no
+        // Vectorizable conformance for shared structs with owned
+        // string fields, so the generated Swift cannot compile.
+        // The list is exposed as count + indexed access instead.
+        fn mm_net_interface_count() -> u32;
+        fn mm_net_interface_at(index: u32) -> Option<MmInterfaceInfo>;
         fn mm_net_snapshot() -> MmNetSnapshot;
         fn mm_net_endpoint() -> MmEndpointOutcome;
         fn mm_net_connection_mode() -> MmConnectionMode;
@@ -817,13 +824,31 @@ fn build_binding(holder: SharedConfig) -> mm_net::ConnectionConfigBinding {
 // mm-net bridge entry points.
 // ---------------------------------------------------------------------------
 
-fn mm_net_scan_interfaces() -> Vec<ffi::MmInterfaceInfo> {
-    net_globals()
-        .stack
-        .active_interfaces()
-        .into_iter()
+// Cache backing mm_net_interface_count / mm_net_interface_at:
+// count() performs a fresh scan and replaces the cache, at()
+// converts cached entries on demand.
+static INTERFACE_SCAN: std::sync::OnceLock<
+    std::sync::Mutex<Vec<mm_net::LocalInterfaceInfo>>,
+> = std::sync::OnceLock::new();
+
+fn interface_scan_cache() -> &'static std::sync::Mutex<Vec<mm_net::LocalInterfaceInfo>> {
+    INTERFACE_SCAN.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+}
+
+fn mm_net_interface_count() -> u32 {
+    let scanned = net_globals().stack.active_interfaces();
+    let count = scanned.len() as u32;
+    *interface_scan_cache().lock().unwrap() = scanned;
+    count
+}
+
+fn mm_net_interface_at(index: u32) -> Option<ffi::MmInterfaceInfo> {
+    interface_scan_cache()
+        .lock()
+        .unwrap()
+        .get(index as usize)
+        .cloned()
         .map(ffi::MmInterfaceInfo::from)
-        .collect()
 }
 
 fn mm_net_snapshot() -> ffi::MmNetSnapshot {
@@ -831,10 +856,6 @@ fn mm_net_snapshot() -> ffi::MmNetSnapshot {
     let g = net_globals();
     let snap = g.scan_source.snapshot();
     ffi::MmNetSnapshot {
-        interfaces: mm_net::active_interfaces(&snap.interfaces)
-            .into_iter()
-            .map(ffi::MmInterfaceInfo::from)
-            .collect(),
         wifi_satisfied: mm_net::is_wifi_satisfied(&snap),
         wired_satisfied: mm_net::is_wired_satisfied(&snap),
         usb_satisfied: mm_net::is_usb_satisfied(&snap.interfaces),
@@ -2017,13 +2038,14 @@ mod tests {
 
     #[test]
     fn net_snapshot_smoke() {
-        let snap = mm_net_snapshot();
+        let _snap = mm_net_snapshot();
+        let count = mm_net_interface_count();
         assert!(
-            !snap.interfaces.is_empty(),
+            count > 0,
             "the test host has at least a loopback interface"
         );
-        let scanned = mm_net_scan_interfaces();
-        assert_eq!(scanned.len(), snap.interfaces.len());
+        assert!(mm_net_interface_at(0).is_some());
+        assert!(mm_net_interface_at(count).is_none());
     }
 
     #[test]
