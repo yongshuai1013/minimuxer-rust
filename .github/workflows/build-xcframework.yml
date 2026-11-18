@@ -74,6 +74,10 @@ jobs:
     name: Build MinimuxerRust.xcframework
     runs-on: macos-15
     needs: test
+    # Tag builds publish a GitHub Release (see the last step);
+    # the repo's default token is read-only, so grant write here.
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
