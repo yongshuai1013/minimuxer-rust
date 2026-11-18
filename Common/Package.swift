@@ -34,7 +34,7 @@ let package = Package(
         .binaryTarget(
             name: "MinimuxerRust",
             url: "https://github.com/yongshuai1013/minimuxer-rust/releases/download/rust-v0.1.0/MinimuxerRust.xcframework.zip",
-            checksum: "__XCFRAMEWORK_CHECKSUM__"
+            checksum: "501c8d396853010dfe893b6690007b6c641a71e20483157e5e122f32383e1893"
         ),
         .target(
             name: "MinimuxerRustBindings",
