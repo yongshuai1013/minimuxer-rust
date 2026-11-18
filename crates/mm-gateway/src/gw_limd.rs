@@ -23,6 +23,7 @@ use std::sync::Mutex;
 use mm_common::constants::APP_NAME;
 use mm_common::logging::debug_log;
 use mm_common::{DeviceGatewayCode, MmErrorInfo, PairingProtocol};
+use idevice::provider::IdeviceProvider as _;
 use rusty_libimobiledevice::error::{IdeviceError as LimdIdeviceError, LockdowndError};
 
 use crate::base::GatewayCore;
@@ -70,7 +71,7 @@ impl LibimobiledeviceGateway {
 
 /// Reverse of the wrapper's `From<i32> for LockdowndError` table,
 /// so Swift's `code <n>` reason formats survive the round trip.
-fn lockdownd_error_code(err: &LockdowndError) -> i32 {
+pub(crate) fn lockdownd_error_code(err: &LockdowndError) -> i32 {
     use LockdowndError::*;
     match err {
         Success => 0,
@@ -121,7 +122,7 @@ fn lockdownd_error_code(err: &LockdowndError) -> i32 {
 /// Reverse of the wrapper's `From<i32> for IdeviceError` table
 /// (idevice.h). `UnknownError` has no recoverable code; -999 marks
 /// the lossy round trip.
-fn idevice_error_code(err: &LimdIdeviceError) -> i32 {
+pub(crate) fn idevice_error_code(err: &LimdIdeviceError) -> i32 {
     use LimdIdeviceError::*;
     match err {
         Success => 0,
@@ -483,4 +484,415 @@ impl DeviceGateway for LibimobiledeviceGateway {
             opened
         })
     }
+
+    // ------------------------------------------------------------------
+    // M5: DDI mount, install pipeline, profiles, debug
+    // (docs/m5-install-ddi-debug-diff.md §4). RP routes return
+    // unsupported until M7.
+    // ------------------------------------------------------------------
+
+    fn is_ddi_mounted<'a>(&'a self) -> GatewayFuture<'a, bool> {
+        Box::pin(async move {
+            let udid = self.verify_initialized()?;
+            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
+                return Err(unsupported("isDDIMounted"));
+            }
+            let mounted = tokio::task::spawn_blocking(move || {
+                crate::gw_limd_ops::is_ddi_mounted(&udid)
+            })
+            .await
+            .map_err(|e| {
+                gw_error(
+                    DeviceGatewayCode::ServiceError,
+                    format!("lockdown task failed: {e}"),
+                )
+            })?;
+            Ok(mounted)
+        })
+    }
+
+    fn mount_developer_image<'a>(
+        &'a self,
+        image: &'a [u8],
+        signature: &'a [u8],
+    ) -> GatewayFuture<'a, ()> {
+        Box::pin(async move {
+            let udid = self.verify_initialized()?;
+            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
+                return Err(unsupported("mountDeveloperImage"));
+            }
+            let image = image.to_vec();
+            let signature = signature.to_vec();
+            tokio::task::spawn_blocking(move || {
+                crate::gw_limd_ops::mount_developer_image(&udid, &image, &signature)
+            })
+            .await
+            .map_err(|e| {
+                gw_error(
+                    DeviceGatewayCode::ServiceError,
+                    format!("lockdown task failed: {e}"),
+                )
+            })?
+        })
+    }
+
+    fn mount_personalized_ddi<'a>(
+        &'a self,
+        image: &'a [u8],
+        trustcache: &'a [u8],
+        build_manifest: &'a [u8],
+    ) -> GatewayFuture<'a, ()> {
+        Box::pin(async move {
+            let _udid = self.verify_initialized()?;
+            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
+                return Err(unsupported("mountPersonalizedDdi"));
+            }
+            // D-M5-7: the wrapper has no
+            // mount_image_with_options, so the personalized
+            // mount goes through the idevice crate over a
+            // UsbmuxdProvider on the proxy (this backend's
+            // device route), reusing gw-idevice's flow.
+            let mux_addr = crate::gw_idevice::usbmuxd_addr_from_env(
+                std::env::var(mm_common::constants::USBMUXD_ENV_KEY)
+                    .ok()
+                    .as_deref(),
+            );
+            let provider = crate::gw_idevice::usbmuxd_provider(mux_addr, APP_NAME)
+                .await?;
+            let pairing_file = provider
+                .get_pairing_file()
+                .await
+                .map_err(|e| {
+                    gw_error(
+                        DeviceGatewayCode::ServiceError,
+                        format!("Failed to load pairing file, error: ({e})"),
+                    )
+                })?;
+            crate::gw_idevice_ops::mount_personalized_with_provider(
+                &provider,
+                &pairing_file,
+                image,
+                trustcache,
+                build_manifest,
+            )
+            .await
+        })
+    }
+
+    fn install_provisioning_profile<'a>(
+        &'a self,
+        profile: &'a [u8],
+    ) -> GatewayFuture<'a, ()> {
+        Box::pin(async move {
+            let udid = self.verify_initialized()?;
+            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
+                return Err(unsupported("installProvisioningProfile"));
+            }
+            let profile = profile.to_vec();
+            tokio::task::spawn_blocking(move || {
+                crate::gw_limd_ops::install_profile(&udid, &profile)
+            })
+            .await
+            .map_err(|e| {
+                gw_error(
+                    DeviceGatewayCode::ServiceError,
+                    format!("lockdown task failed: {e}"),
+                )
+            })?
+        })
+    }
+
+    fn remove_provisioning_profile<'a>(
+        &'a self,
+        profile_id: &'a str,
+    ) -> GatewayFuture<'a, ()> {
+        Box::pin(async move {
+            let udid = self.verify_initialized()?;
+            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
+                return Err(unsupported("removeProvisioningProfile"));
+            }
+            let profile_id = profile_id.to_string();
+            tokio::task::spawn_blocking(move || {
+                crate::gw_limd_ops::remove_profile(&udid, &profile_id)
+            })
+            .await
+            .map_err(|e| {
+                gw_error(
+                    DeviceGatewayCode::ServiceError,
+                    format!("lockdown task failed: {e}"),
+                )
+            })?
+        })
+    }
+
+    fn dump_profiles<'a>(&'a self, docs_path: &'a str) -> GatewayFuture<'a, String> {
+        Box::pin(async move {
+            let udid = self.verify_initialized()?;
+            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
+                return Err(unsupported("dumpProfiles"));
+            }
+            let docs_path = docs_path.to_string();
+            tokio::task::spawn_blocking(move || {
+                crate::gw_limd_ops::dump_profiles_raw(&udid, &docs_path)
+            })
+            .await
+            .map_err(|e| {
+                gw_error(
+                    DeviceGatewayCode::ServiceError,
+                    format!("lockdown task failed: {e}"),
+                )
+            })?
+        })
+    }
+
+    fn remove_app<'a>(&'a self, bundle_id: &'a str) -> GatewayFuture<'a, ()> {
+        Box::pin(async move {
+            let udid = self.verify_initialized()?;
+            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
+                return Err(unsupported("removeApp"));
+            }
+            let bundle_id = bundle_id.to_string();
+            tokio::task::spawn_blocking(move || {
+                crate::gw_limd_ops::remove_app(&udid, &bundle_id)
+            })
+            .await
+            .map_err(|e| {
+                gw_error(
+                    DeviceGatewayCode::ServiceError,
+                    format!("lockdown task failed: {e}"),
+                )
+            })?
+        })
+    }
+
+    fn send_ipa_afc<'a>(
+        &'a self,
+        bundle_id: &'a str,
+        ipa_bytes: &'a [u8],
+    ) -> GatewayFuture<'a, ()> {
+        Box::pin(async move {
+            let udid = self.verify_initialized()?;
+            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
+                return Err(unsupported("sendIpaAfc"));
+            }
+            let bundle_id = bundle_id.to_string();
+            let ipa_bytes = ipa_bytes.to_vec();
+            tokio::task::spawn_blocking(move || {
+                crate::gw_limd_ops::send_ipa_afc(&udid, &bundle_id, &ipa_bytes)
+            })
+            .await
+            .map_err(|e| {
+                gw_error(
+                    DeviceGatewayCode::ServiceError,
+                    format!("lockdown task failed: {e}"),
+                )
+            })?
+        })
+    }
+
+    fn send_app_bundle_afc<'a>(
+        &'a self,
+        bundle_id: &'a str,
+        app_path: &'a str,
+    ) -> GatewayFuture<'a, ()> {
+        Box::pin(async move {
+            let udid = self.verify_initialized()?;
+            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
+                return Err(unsupported("sendAppBundleAfc"));
+            }
+            let bundle_id = bundle_id.to_string();
+            let app_path = std::path::PathBuf::from(app_path);
+            tokio::task::spawn_blocking(move || {
+                crate::gw_limd_ops::send_app_bundle_afc(&udid, &bundle_id, &app_path)
+            })
+            .await
+            .map_err(|e| {
+                gw_error(
+                    DeviceGatewayCode::ServiceError,
+                    format!("lockdown task failed: {e}"),
+                )
+            })?
+        })
+    }
+
+    fn install_ipa<'a>(&'a self, bundle_id: &'a str) -> GatewayFuture<'a, ()> {
+        Box::pin(async move {
+            let udid = self.verify_initialized()?;
+            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
+                return Err(unsupported("installIpa"));
+            }
+            let bundle_id = bundle_id.to_string();
+            tokio::task::spawn_blocking(move || {
+                crate::gw_limd_ops::install_ipa(&udid, &bundle_id)
+            })
+            .await
+            .map_err(|e| {
+                gw_error(
+                    DeviceGatewayCode::ServiceError,
+                    format!("lockdown task failed: {e}"),
+                )
+            })?
+        })
+    }
+
+    fn install_app_bundle<'a>(
+        &'a self,
+        bundle_id: &'a str,
+        app_name: &'a str,
+    ) -> GatewayFuture<'a, ()> {
+        Box::pin(async move {
+            let udid = self.verify_initialized()?;
+            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
+                return Err(unsupported("installAppBundle"));
+            }
+            let bundle_id = bundle_id.to_string();
+            let app_name = app_name.to_string();
+            tokio::task::spawn_blocking(move || {
+                crate::gw_limd_ops::install_app_bundle(&udid, &bundle_id, &app_name)
+            })
+            .await
+            .map_err(|e| {
+                gw_error(
+                    DeviceGatewayCode::ServiceError,
+                    format!("lockdown task failed: {e}"),
+                )
+            })?
+        })
+    }
+
+    fn wipe_container<'a>(&'a self, bundle_id: &'a str) -> GatewayFuture<'a, ()> {
+        Box::pin(async move {
+            let udid = self.verify_initialized()?;
+            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
+                return Err(unsupported("wipeContainer"));
+            }
+            let bundle_id = bundle_id.to_string();
+            tokio::task::spawn_blocking(move || {
+                crate::gw_limd_ops::wipe_container(&udid, &bundle_id)
+            })
+            .await
+            .map_err(|e| {
+                gw_error(
+                    DeviceGatewayCode::ServiceError,
+                    format!("lockdown task failed: {e}"),
+                )
+            })?
+        })
+    }
+
+    fn debug_app<'a>(&'a self, bundle_id: &'a str) -> GatewayFuture<'a, ()> {
+        Box::pin(async move {
+            let udid = self.verify_initialized()?;
+            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
+                return Err(unsupported("debugApp"));
+            }
+            let bundle_id = bundle_id.to_string();
+            tokio::task::spawn_blocking(move || {
+                crate::gw_limd_ops::debug_app(&udid, &bundle_id)
+            })
+            .await
+            .map_err(|e| {
+                gw_error(
+                    DeviceGatewayCode::ServiceError,
+                    format!("lockdown task failed: {e}"),
+                )
+            })?
+        })
+    }
+
+    fn debug_process<'a>(&'a self, pid: u32) -> GatewayFuture<'a, ()> {
+        Box::pin(async move {
+            let udid = self.verify_initialized()?;
+            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
+                return Err(unsupported("debugProcess"));
+            }
+            tokio::task::spawn_blocking(move || {
+                crate::gw_limd_ops::debug_process(&udid, pid)
+            })
+            .await
+            .map_err(|e| {
+                gw_error(
+                    DeviceGatewayCode::ServiceError,
+                    format!("lockdown task failed: {e}"),
+                )
+            })?
+        })
+    }
+
+    fn afc_list_directory<'a>(
+        &'a self,
+        bundle_id: &'a str,
+        path: &'a str,
+    ) -> GatewayFuture<'a, Vec<String>> {
+        Box::pin(async move {
+            let udid = self.verify_initialized()?;
+            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
+                return Err(unsupported("afcListDirectory"));
+            }
+            // Swift limd ignores the bundle id here (D-M5-11).
+            let _ = bundle_id;
+            let path = path.to_string();
+            tokio::task::spawn_blocking(move || {
+                crate::gw_limd_ops::afc_list_directory(&udid, &path)
+            })
+            .await
+            .map_err(|e| {
+                gw_error(
+                    DeviceGatewayCode::ServiceError,
+                    format!("lockdown task failed: {e}"),
+                )
+            })?
+        })
+    }
+
+    fn afc_read_file<'a>(
+        &'a self,
+        bundle_id: &'a str,
+        path: &'a str,
+    ) -> GatewayFuture<'a, Vec<u8>> {
+        Box::pin(async move {
+            let udid = self.verify_initialized()?;
+            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
+                return Err(unsupported("afcReadFile"));
+            }
+            let _ = bundle_id;
+            let path = path.to_string();
+            tokio::task::spawn_blocking(move || {
+                crate::gw_limd_ops::afc_read_file(&udid, &path)
+            })
+            .await
+            .map_err(|e| {
+                gw_error(
+                    DeviceGatewayCode::ServiceError,
+                    format!("lockdown task failed: {e}"),
+                )
+            })?
+        })
+    }
+
+    fn afc_get_file_info<'a>(
+        &'a self,
+        bundle_id: &'a str,
+        path: &'a str,
+    ) -> GatewayFuture<'a, crate::gateway::AfcFileInfo> {
+        Box::pin(async move {
+            let udid = self.verify_initialized()?;
+            if self.core.pairing_file_type() == PairingProtocol::RpPairing {
+                return Err(unsupported("afcGetFileInfo"));
+            }
+            let _ = bundle_id;
+            let path = path.to_string();
+            tokio::task::spawn_blocking(move || {
+                crate::gw_limd_ops::afc_get_file_info(&udid, &path)
+            })
+            .await
+            .map_err(|e| {
+                gw_error(
+                    DeviceGatewayCode::ServiceError,
+                    format!("lockdown task failed: {e}"),
+                )
+            })?
+        })
+    }
+
 }

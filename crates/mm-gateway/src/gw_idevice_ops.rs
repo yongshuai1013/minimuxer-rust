@@ -19,7 +19,7 @@ use idevice::lockdown::LockdownClient;
 use idevice::misagent::MisagentClient;
 use idevice::mobile_image_mounter::ImageMounter;
 use idevice::pairing_file::PairingFile;
-use idevice::provider::TcpProvider;
+use idevice::provider::{IdeviceProvider, TcpProvider};
 use idevice::{Idevice, IdeviceError, IdeviceService};
 use mm_common::constants::APP_NAME;
 use mm_common::{DeviceGatewayCode, MmErrorInfo};
@@ -610,13 +610,34 @@ pub async fn mount_personalized_ddi(
     build_manifest: &[u8],
 ) -> Result<(), MmErrorInfo> {
     let provider = ctx.tcp_provider();
-    let chip_id = unique_chip_id(ctx).await?;
-    let mut mounter = ImageMounter::connect(&provider).await.map_err(|_| {
+    mount_personalized_with_provider(
+        &provider,
+        &ctx.pairing_file,
+        image,
+        trustcache,
+        build_manifest,
+    )
+    .await
+}
+
+/// The provider-generic core of `mount_personalized_ddi`
+/// (also the limd backend's personalized route — diff list
+/// D-M5-7 — where the provider is a `UsbmuxdProvider` over
+/// the proxy).
+pub async fn mount_personalized_with_provider<P: IdeviceProvider>(
+    provider: &P,
+    pairing_file: &PairingFile,
+    image: &[u8],
+    trustcache: &[u8],
+    build_manifest: &[u8],
+) -> Result<(), MmErrorInfo> {
+    let chip_id = unique_chip_id(provider, pairing_file).await?;
+    let mut mounter = ImageMounter::connect(provider).await.map_err(|_| {
         service_error("Failed to connect to image mounter".to_string())
     })?;
     mounter
         .mount_personalized_with_callback(
-            &provider,
+            provider,
             image.to_vec(),
             trustcache.to_vec(),
             build_manifest,
@@ -634,9 +655,11 @@ pub async fn mount_personalized_ddi(
         })
 }
 
-async fn unique_chip_id(ctx: &IdeviceCtx) -> Result<u64, MmErrorInfo> {
-    let provider = ctx.tcp_provider();
-    let mut lockdown = LockdownClient::connect(&provider)
+async fn unique_chip_id<P: IdeviceProvider>(
+    provider: &P,
+    pairing_file: &PairingFile,
+) -> Result<u64, MmErrorInfo> {
+    let mut lockdown = LockdownClient::connect(provider)
         .await
         .map_err(|_| gw_error(DeviceGatewayCode::NoConnection, ""))?;
     // First attempt without a session (Swift's order).
@@ -651,7 +674,7 @@ async fn unique_chip_id(ctx: &IdeviceCtx) -> Result<u64, MmErrorInfo> {
         }
     }
     lockdown
-        .start_session(&ctx.pairing_file)
+        .start_session(pairing_file)
         .await
         .map_err(|_| gw_error(DeviceGatewayCode::NoConnection, ""))?;
     let value = lockdown
