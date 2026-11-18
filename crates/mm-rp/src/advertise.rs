@@ -256,7 +256,7 @@ mod apple {
                     port.to_be(),
                     txt.len() as u16,
                     txt.as_ptr(),
-                    register_reply,
+                    Some(register_reply),
                     context,
                 )
             };
