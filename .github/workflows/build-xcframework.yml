@@ -74,6 +74,9 @@ jobs:
       - name: Install Rust targets
         run: rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
 
+      - name: Install bindgen for aws-lc (idevice dependency)
+        run: cargo install --force --locked bindgen-cli
+
       # The shipped build enables the libimobiledevice backend;
       # its C symbols resolve when the App links (SideStore links
       # libimobiledevice for the Swift minimuxer already).
