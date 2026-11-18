@@ -10,3 +10,13 @@ mm-common = { path = "../mm-common" }
 # binaryTarget ships (tag v0.9.3 == develop HEAD at pin time).
 em_proxy = { git = "https://github.com/SideStore/em_proxy", rev = "6e117e140ca7cff4ff106bdefa18147552a0e592" }
 tokio = { version = "1.44", features = ["rt", "time", "sync"] }
+
+[dev-dependencies]
+# WireGuard client-side crypto for the EMProxyTests Test-2 port
+# (behavior list §C): versions unify with boringtun's own tree.
+# BLAKE2s is hand-ported from the Swift test's own implementation
+# (CryptoKit has no BLAKE2s; the test file carries RFC 7693 code).
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+chacha20poly1305 = "0.10"
+base64 = "0.22"
+tokio = { version = "1.44", features = ["macros", "net"] }

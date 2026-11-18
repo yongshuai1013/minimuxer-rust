@@ -21,4 +21,4 @@ pub use pairing::{
     validate_pairing_file, LockdownPairingFile, PairingFile, PairingProtocol, RpPairingFile,
     LOCKDOWN_REQUIRED_KEYS, RP_REQUIRED_KEYS,
 };
-pub use probe::{test_tcp, test_tcp_default};
+pub use probe::{probe_tcp_outcome, test_tcp, test_tcp_default, TcpProbeOutcome};

@@ -1684,10 +1684,12 @@ dependencies = [
 name = "mm-emproxy"
 version = "0.1.0"
 dependencies = [
+ "base64",
+ "chacha20poly1305",
  "em_proxy",
- "libc",
  "mm-common",
  "tokio",
+ "x25519-dalek",
 ]
 
 [[package]]
