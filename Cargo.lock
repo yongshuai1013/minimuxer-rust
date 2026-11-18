@@ -1501,7 +1501,9 @@ dependencies = [
 name = "mm-net"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "mm-common",
+ "tokio",
 ]
 
 [[package]]
