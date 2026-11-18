@@ -96,6 +96,29 @@ jobs:
       # The shipped build enables the libimobiledevice backend;
       # its C symbols resolve when the App links (SideStore links
       # libimobiledevice for the Swift minimuxer already).
+      - name: DIAG shim symbol emission probe
+        run: |
+          set -x
+          mkdir -p /tmp/probe && cd /tmp/probe
+          cp "$GITHUB_WORKSPACE/Common/Bindings/minimuxer_rust.swift" .
+          cp "$GITHUB_WORKSPACE/Common/Bindings/SwiftBridgeCore.swift" .
+          cp "$GITHUB_WORKSPACE/Common/Bindings/ShellSinks.swift" .
+          HDRS="$GITHUB_WORKSPACE/crates/mm-ffi/generated"
+          for MODE in wmo plain; do
+            if [ "$MODE" = wmo ]; then EXTRA="-whole-module-optimization"; else EXTRA=""; fi
+            xcrun swiftc -O $EXTRA -emit-object -module-name MinimuxerRustBindings \
+              -I "$HDRS" -import-objc-header /dev/null \
+              minimuxer_rust.swift SwiftBridgeCore.swift ShellSinks.swift \
+              -o probe-$MODE.o 2>&1 | head -5 || true
+            echo "== $MODE: shim symbols in object =="
+            nm probe-$MODE.o 2>/dev/null | grep -i "MmEventSink" | head -8 || true
+            echo "== $MODE: total swift_bridge globals =="
+            nm probe-$MODE.o 2>/dev/null | grep -c " T \| t " || true
+          done
+          echo "== reference: onone =="
+          xcrun swiftc -Onone -emit-object -module-name MinimuxerRustBindings -I "$HDRS" minimuxer_rust.swift SwiftBridgeCore.swift ShellSinks.swift -o probe-onone.o 2>&1 | head -5 || true
+          nm probe-onone.o 2>/dev/null | grep -i "MmEventSink" | head -8 || true
+
       - name: Build staticlibs (release)
         run: |
           cargo build -p mm-ffi --release --features limd --target aarch64-apple-ios

@@ -14,16 +14,9 @@ import PackageDescription
 // shell packages (DeviceGateway, Minimuxer) can share the single
 // copy; it is not part of the App-facing surface.
 //
-// The bindings product is DYNAMIC on purpose: the generated code
-// contains the @_cdecl shims for the Swift-implemented bridge
-// types (MmEventSink, MmConnectionConfig, MmWirelessPairSink)
-// that the Rust staticlib calls back into. In a static product
-// those shims never reach the App link (the integration build
-// failed with exactly those 20 symbols undefined), because
-// nothing on the Swift side references them and archive member
-// pulling drops the object that defines them. A dynamic
-// framework links all of the target's objects unconditionally
-// and exports the shims.
+// (A dynamic bindings product was tried and is impossible:
+// the target is also in the static products' closures, and
+// Xcode refuses to build one target both ways.)
 //
 // The libimobiledevice binaryTarget mirrors the Swift package's
 // DeviceGateway manifest: the Rust core's limd backend
@@ -45,7 +38,6 @@ let package = Package(
         ),
         .library(
             name: "MinimuxerRustBindings",
-            type: .dynamic,
             targets: ["MinimuxerRustBindings"]
         )
     ],
