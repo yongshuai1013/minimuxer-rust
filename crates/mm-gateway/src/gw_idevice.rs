@@ -18,7 +18,9 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
+use std::io;
 use std::sync::Mutex;
+use std::task::{Context, Poll};
 
 use idevice::lockdown::LockdownClient;
 use idevice::pairing_file::PairingFile;
@@ -28,6 +30,7 @@ use idevice::{Idevice, IdeviceError, IdeviceService};
 use mm_common::constants::{APP_NAME, USBMUXD_SOCKET};
 use mm_common::logging::debug_log;
 use mm_common::{DeviceGatewayCode, MmErrorInfo, PairingProtocol};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
 
 use crate::base::GatewayCore;
@@ -88,6 +91,9 @@ struct ServiceSlot {
 /// LocalDevVPN tunnel and the one that completes handshakes.
 /// Only `connect_lockdown` uses this provider; every other
 /// connection in this file keeps the stock `TcpProvider`.
+/// Since rust-v0.1.5 the returned stream is additionally
+/// wrapped in `CoalescingStream` (single-write probe; see its
+/// doc comment) — NODELAY stays on underneath it.
 #[derive(Debug)]
 struct NodelayTcpProvider {
     addr: IpAddr,
@@ -106,7 +112,9 @@ impl IdeviceProvider for NodelayTcpProvider {
             let stream = TcpStream::connect(SocketAddr::new(addr, port)).await?;
             // NODELAY 判別槍：連上後立即開 TCP_NODELAY，其餘與 TcpProvider 逐字相同。
             stream.set_nodelay(true)?;
-            Ok(Idevice::new(Box::new(stream), label))
+            // 單次寫入判別槍：再包一層 CoalescingStream，把每訊息的
+            // 頭+身兩次 write 併成一次 underlying write（見其註解）。
+            Ok(Idevice::new(Box::new(CoalescingStream::new(stream)), label))
         })
     }
 
@@ -119,6 +127,197 @@ impl IdeviceProvider for NodelayTcpProvider {
     ) -> Pin<Box<dyn Future<Output = Result<PairingFile, IdeviceError>> + Send>> {
         let pairing_file = self.pairing_file.clone();
         Box::pin(async move { Ok(pairing_file) })
+    }
+}
+
+/// 單次寫入判別槍 (single-write probe, 2026-11-19): a stream
+/// wrapper that coalesces the idevice crate's per-message write
+/// pairs into single underlying writes, stacked on top of the
+/// NODELAY provider's stream. Verified in the idevice 0.1.29
+/// crate source: `Idevice::send_plist` emits every lockdown
+/// message as exactly two `write_all` calls — a 4-byte
+/// big-endian length header, then the XML body — and every
+/// plaintext lockdown operation (QueryType, GetValue,
+/// StartSession) goes through it. The NODELAY probe
+/// (rust-v0.1.4) removed Nagle's wait between the two writes and
+/// the first exchange still died; what then remained different
+/// from libimobiledevice — whose glue assembles header+body and
+/// sends them in ONE write — is the boundary itself: two writes
+/// reach the LocalDevVPN loopback as two separate arrivals.
+/// This wrapper holds the first write of each pair and, when
+/// the second arrives, sends header+body in a single underlying
+/// write, mimicking the glue shape on this connection only.
+///
+/// Coverage is the connection's first four messages (eight
+/// writes): the warmup QueryType, GetValue ProductVersion,
+/// GetValue DeviceClass, and StartSession itself — all
+/// plaintext. From the ninth write on the wrapper is a
+/// permanent passthrough, so the TLS upgrade and everything
+/// after it are untouched. `poll_flush`/`poll_shutdown` with a
+/// held half-write send it first (safety valve; byte order is
+/// preserved regardless, since coalescing only concatenates).
+/// The read side is a pure passthrough.
+#[derive(Debug)]
+struct CoalescingStream<S> {
+    inner: S,
+    /// Pairwise-coalesced writes remaining (starts at
+    /// `COALESCE_WRITES`); zero means permanent passthrough.
+    coalesce_writes_left: u8,
+    /// First write of a pair, held until the second arrives.
+    pending: Option<Vec<u8>>,
+    /// Bytes on their way to `inner`: a combined pair, or a
+    /// flush-released half.
+    out: Vec<u8>,
+    /// How much of `out` `inner` has accepted so far.
+    out_pos: usize,
+    /// What the interrupted caller of a pair's second write
+    /// must be told once `out` drains. `None` while `out` is
+    /// flush-owned (no caller waits on a count). Invariant:
+    /// `out` non-empty implies `out_report` names its owner.
+    out_report: Option<usize>,
+}
+
+/// Writes covered by pairwise coalescing: four lockdown
+/// messages (warmup ×3 + StartSession) × two writes each.
+const COALESCE_WRITES: u8 = 8;
+
+impl<S> CoalescingStream<S> {
+    fn new(inner: S) -> Self {
+        Self {
+            inner,
+            coalesce_writes_left: COALESCE_WRITES,
+            pending: None,
+            out: Vec::new(),
+            out_pos: 0,
+            out_report: None,
+        }
+    }
+}
+
+impl<S: AsyncWrite + Unpin> CoalescingStream<S> {
+    /// Drives `out` into `inner` until it drains. On success
+    /// `out` is cleared; `out_report` is left in place for its
+    /// owner to consume.
+    fn poll_drain_out(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        while self.out_pos < self.out.len() {
+            let res = Pin::new(&mut self.inner).poll_write(cx, &self.out[self.out_pos..]);
+            match res {
+                Poll::Ready(Ok(0)) => {
+                    return Poll::Ready(Err(io::Error::new(
+                        io::ErrorKind::WriteZero,
+                        "CoalescingStream: underlying write returned 0",
+                    )));
+                }
+                Poll::Ready(Ok(n)) => self.out_pos += n,
+                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+        self.out.clear();
+        self.out_pos = 0;
+        Poll::Ready(Ok(()))
+    }
+
+    /// Flush preparation shared by `poll_flush` and
+    /// `poll_shutdown`: release a held half-write into `out`
+    /// (when no pair is in flight) and drain whatever is in
+    /// flight, so no held bytes are ever stranded.
+    fn poll_drain_for_flush(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        if self.out.is_empty() {
+            if let Some(half) = self.pending.take() {
+                self.out = half;
+                self.out_report = None;
+            }
+        }
+        if self.out.is_empty() {
+            return Poll::Ready(Ok(()));
+        }
+        self.poll_drain_out(cx)
+    }
+}
+
+impl<S: AsyncWrite + Unpin> AsyncWrite for CoalescingStream<S> {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        let this = self.get_mut();
+        // A combined pair is still draining (an earlier
+        // poll_write returned Pending): finish it before
+        // looking at `buf` — on this retry `buf` is the same
+        // second half that is already inside `out`.
+        if !this.out.is_empty() {
+            match this.poll_drain_out(cx) {
+                Poll::Ready(Ok(())) => {
+                    if let Some(n) = this.out_report.take() {
+                        return Poll::Ready(Ok(n));
+                    }
+                    // Flush-owned bytes finished draining;
+                    // fall through and treat `buf` as fresh.
+                }
+                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+        if this.coalesce_writes_left == 0 {
+            return Pin::new(&mut this.inner).poll_write(cx, buf);
+        }
+        if buf.is_empty() {
+            return Poll::Ready(Ok(0));
+        }
+        match this.pending.take() {
+            None => {
+                // First write of a pair: hold it, report it
+                // consumed, send nothing yet.
+                this.pending = Some(buf.to_vec());
+                this.coalesce_writes_left -= 1;
+                Poll::Ready(Ok(buf.len()))
+            }
+            Some(mut first) => {
+                // Second write of a pair: a single underlying
+                // write carrying header+body together.
+                first.extend_from_slice(buf);
+                this.out = first;
+                this.out_pos = 0;
+                this.out_report = Some(buf.len());
+                this.coalesce_writes_left -= 1;
+                match this.poll_drain_out(cx) {
+                    Poll::Ready(Ok(())) => {
+                        let n = this.out_report.take().unwrap_or(buf.len());
+                        Poll::Ready(Ok(n))
+                    }
+                    Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
+                    Poll::Pending => Poll::Pending,
+                }
+            }
+        }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        let this = self.get_mut();
+        match this.poll_drain_for_flush(cx) {
+            Poll::Ready(Ok(())) => Pin::new(&mut this.inner).poll_flush(cx),
+            other => other,
+        }
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        let this = self.get_mut();
+        match this.poll_drain_for_flush(cx) {
+            Poll::Ready(Ok(())) => Pin::new(&mut this.inner).poll_shutdown(cx),
+            other => other,
+        }
+    }
+}
+
+impl<S: AsyncRead + Unpin> AsyncRead for CoalescingStream<S> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().inner).poll_read(cx, buf)
     }
 }
 
@@ -1281,4 +1480,104 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack
         .windows(needle.len())
         .position(|w| w == needle)
+}
+
+#[cfg(test)]
+mod coalescing_tests {
+    use super::CoalescingStream;
+    use std::io;
+    use std::pin::Pin;
+    use std::sync::{Arc, Mutex};
+    use std::task::{Context, Poll};
+    use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
+
+    /// Records every underlying write call verbatim.
+    #[derive(Debug, Default)]
+    struct MockStream {
+        writes: Arc<Mutex<Vec<Vec<u8>>>>,
+    }
+
+    impl AsyncRead for MockStream {
+        fn poll_read(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            _buf: &mut ReadBuf<'_>,
+        ) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(())) // EOF; the write tests never read
+        }
+    }
+
+    impl AsyncWrite for MockStream {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            buf: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            self.writes.lock().unwrap().push(buf.to_vec());
+            Poll::Ready(Ok(buf.len()))
+        }
+
+        fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    #[tokio::test]
+    async fn first_eight_writes_coalesce_into_four() {
+        let mock = MockStream::default();
+        let log = mock.writes.clone();
+        let mut stream = CoalescingStream::new(mock);
+        let parts: [&[u8]; 8] = [
+            b"HDR1",
+            b"<plist>one</plist>",
+            b"HDR2",
+            b"<plist>two</plist>",
+            b"HDR3",
+            b"<plist>three</plist>",
+            b"HDR4",
+            b"<plist>four</plist>",
+        ];
+        for part in parts {
+            stream.write_all(part).await.unwrap();
+        }
+        let writes = log.lock().unwrap();
+        assert_eq!(writes.len(), 4, "8 writes must reach the wire as 4");
+        for (i, pair) in writes.iter().enumerate() {
+            let mut expect = parts[2 * i].to_vec();
+            expect.extend_from_slice(parts[2 * i + 1]);
+            assert_eq!(*pair, expect, "pair {i} must be header+body");
+        }
+    }
+
+    #[tokio::test]
+    async fn ninth_write_passes_through_immediately() {
+        let mock = MockStream::default();
+        let log = mock.writes.clone();
+        let mut stream = CoalescingStream::new(mock);
+        for i in 0..8u8 {
+            stream.write_all(&[b'x' + i]).await.unwrap();
+        }
+        assert_eq!(log.lock().unwrap().len(), 4);
+        stream.write_all(b"ninth").await.unwrap();
+        let writes = log.lock().unwrap();
+        assert_eq!(writes.len(), 5, "9th write must not wait for a pair");
+        assert_eq!(writes[4], b"ninth".to_vec());
+    }
+
+    #[tokio::test]
+    async fn flush_releases_a_held_half_write() {
+        let mock = MockStream::default();
+        let log = mock.writes.clone();
+        let mut stream = CoalescingStream::new(mock);
+        stream.write_all(b"HDR!").await.unwrap();
+        assert!(log.lock().unwrap().is_empty(), "half must be held");
+        stream.flush().await.unwrap();
+        let writes = log.lock().unwrap();
+        assert_eq!(writes.len(), 1);
+        assert_eq!(writes[0], b"HDR!".to_vec());
+    }
 }
