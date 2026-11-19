@@ -50,8 +50,8 @@ let package = Package(
     targets: [
         .binaryTarget(
             name: "MinimuxerRust",
-            url: "https://github.com/yongshuai1013/minimuxer-rust/releases/download/rust-v0.1.4/MinimuxerRust.xcframework.zip",
-            checksum: "dcc76daad3e4d1814bd4e48478425ed7f78677ecdbde2aaf7c5b28f50c441c7a"
+            url: "https://github.com/yongshuai1013/minimuxer-rust/releases/download/rust-v0.1.5/MinimuxerRust.xcframework.zip",
+            checksum: "612056fad31cfe52982f4cb0d1e42075cf42b6613d9f6c74ea61323d8fb3f6af"
         ),
         .binaryTarget(
             name: "libimobiledevice",
