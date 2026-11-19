@@ -178,10 +178,23 @@ impl IdeviceGateway {
     /// mapping failures with Swift's `syncGetLockdownValue`
     /// classification (pairing-class → invalidPairingFile, else
     /// connectionFailed).
+    ///
+    /// PROBE (warmup, 2026-11-19): `warmup_lockdown` runs first, on
+    /// this same connection. The idevice crate's `start_session`
+    /// otherwise makes StartSession the first request on a fresh
+    /// connection, which the LocalDevVPN tunnel path cuts before
+    /// the response (field verdict: four independent idevice-crate
+    /// stacks dead at this exchange; limd's handshake, which warms
+    /// the connection up first, completes). If the warmup itself
+    /// dies, its step-identifying reason says where; if the warmup
+    /// passes and StartSession still dies, the reason below is
+    /// unchanged — the two outcomes are distinguishable from the
+    /// App's error string alone.
     async fn start_session_on(
         &self,
         client: &mut LockdownClient,
     ) -> Result<(), MmErrorInfo> {
+        self.warmup_lockdown(client).await?;
         let pairing_file = self.require_pairing_file()?;
         client.start_session(&pairing_file).await.map_err(|e| {
             if is_pairing_error(&e) {
@@ -196,6 +209,58 @@ impl IdeviceGateway {
                 )
             }
         })
+    }
+
+    /// The limd-style pre-session warmup (see `start_session_on`):
+    /// on this connection, before StartSession, replay the three
+    /// plaintext exchanges libimobiledevice's
+    /// `lockdownd_client_new_with_handshake` performs —
+    /// QueryType, GetValue "ProductVersion", GetValue "DeviceClass".
+    ///
+    /// Crate API notes (idevice 0.1.29): `LockdownClient` has no
+    /// QueryType method of its own, but its `idevice` field is
+    /// public and `Idevice::get_type` is exactly the QueryType
+    /// exchange (and returns the Type string, verified here the
+    /// way limd verifies it). The GetValue reads use
+    /// `LockdownClient::get_value`, which the crate does not gate
+    /// on an established session — the same pre-session reads limd
+    /// performs. Any step failing aborts the session attempt with
+    /// a step-identifying reason (connectionFailed class).
+    async fn warmup_lockdown(
+        &self,
+        client: &mut LockdownClient,
+    ) -> Result<(), MmErrorInfo> {
+        let device_type = client.idevice.get_type().await.map_err(|e| {
+            gw_error(
+                DeviceGatewayCode::ConnectionFailed,
+                format!("warmup QueryType failed: {e}"),
+            )
+        })?;
+        if device_type != "com.apple.mobile.lockdown" {
+            return Err(gw_error(
+                DeviceGatewayCode::ConnectionFailed,
+                format!(
+                    "warmup QueryType failed: {}",
+                    IdeviceError::UnexpectedResponse
+                ),
+            ));
+        }
+        debug_log("[IdeviceGateway] warmup QueryType ok");
+        client.get_value("ProductVersion").await.map_err(|e| {
+            gw_error(
+                DeviceGatewayCode::ConnectionFailed,
+                format!("warmup GetValue ProductVersion failed: {e}"),
+            )
+        })?;
+        debug_log("[IdeviceGateway] warmup GetValue ProductVersion ok");
+        client.get_value("DeviceClass").await.map_err(|e| {
+            gw_error(
+                DeviceGatewayCode::ConnectionFailed,
+                format!("warmup GetValue DeviceClass failed: {e}"),
+            )
+        })?;
+        debug_log("[IdeviceGateway] warmup GetValue DeviceClass ok");
+        Ok(())
     }
 
     fn drop_stale_services(&self) {

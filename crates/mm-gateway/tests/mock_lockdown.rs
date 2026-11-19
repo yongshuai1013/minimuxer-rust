@@ -232,6 +232,16 @@ async fn handle_conn(
             .unwrap_or("")
             .to_string();
         match request.as_str() {
+            "QueryType" => {
+                write_frame(
+                    stream.as_mut().unwrap(),
+                    dict_of(&[
+                        ("Request", Value::String("QueryType".into())),
+                        ("Type", Value::String("com.apple.mobile.lockdown".into())),
+                    ]),
+                )
+                .await;
+            }
             "StartSession" => {
                 let behavior = state.lock().unwrap().session;
                 match behavior {
@@ -270,6 +280,7 @@ async fn handle_conn(
                 let value = match key.as_str() {
                     "UniqueDeviceID" => Some(FIXTURE_UDID),
                     "ProductVersion" => Some("15.8.8"),
+                    "DeviceClass" => Some("iPhone"),
                     "DeviceName" => Some("MockPhone"),
                     _ => None,
                 };
