@@ -15,7 +15,9 @@
 //! call sites in Swift) is implemented as a helper.
 
 use std::collections::HashMap;
-use std::net::IpAddr;
+use std::future::Future;
+use std::net::{IpAddr, SocketAddr};
+use std::pin::Pin;
 use std::sync::Mutex;
 
 use idevice::lockdown::LockdownClient;
@@ -26,6 +28,7 @@ use idevice::{Idevice, IdeviceError, IdeviceService};
 use mm_common::constants::{APP_NAME, USBMUXD_SOCKET};
 use mm_common::logging::debug_log;
 use mm_common::{DeviceGatewayCode, MmErrorInfo, PairingProtocol};
+use tokio::net::TcpStream;
 
 use crate::base::GatewayCore;
 use crate::gateway::{gw_error, DeviceGateway, GatewayBackend, GatewayFuture, OpenedService};
@@ -72,6 +75,51 @@ struct ServiceSlot {
     #[allow(dead_code)]
     connection: Idevice,
     generation: u64,
+}
+
+/// NODELAY probe provider (2026-11-19): a `TcpProvider` clone
+/// that sets TCP_NODELAY on the stream right after connect.
+/// The idevice crate never setsockopts, so Nagle stays on and
+/// the first lockdown exchange leaves as a lone 4-byte length
+/// header with the body held back for the ACK; libimobiledevice
+/// sets TCP_NODELAY and its header+body leave back-to-back —
+/// the one measured wire-level difference between the stack
+/// that dies deterministically at its first exchange over the
+/// LocalDevVPN tunnel and the one that completes handshakes.
+/// Only `connect_lockdown` uses this provider; every other
+/// connection in this file keeps the stock `TcpProvider`.
+#[derive(Debug)]
+struct NodelayTcpProvider {
+    addr: IpAddr,
+    pairing_file: PairingFile,
+    label: String,
+}
+
+impl IdeviceProvider for NodelayTcpProvider {
+    fn connect(
+        &self,
+        port: u16,
+    ) -> Pin<Box<dyn Future<Output = Result<Idevice, IdeviceError>> + Send>> {
+        let addr = self.addr;
+        let label = self.label.clone();
+        Box::pin(async move {
+            let stream = TcpStream::connect(SocketAddr::new(addr, port)).await?;
+            // NODELAY 判別槍：連上後立即開 TCP_NODELAY，其餘與 TcpProvider 逐字相同。
+            stream.set_nodelay(true)?;
+            Ok(Idevice::new(Box::new(stream), label))
+        })
+    }
+
+    fn label(&self) -> &str {
+        &self.label
+    }
+
+    fn get_pairing_file(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<PairingFile, IdeviceError>> + Send>> {
+        let pairing_file = self.pairing_file.clone();
+        Box::pin(async move { Ok(pairing_file) })
+    }
 }
 
 impl Default for IdeviceGateway {
@@ -151,6 +199,21 @@ impl IdeviceGateway {
         })
     }
 
+    /// The NODELAY probe's provider for `connect_lockdown`:
+    /// the same fields as `tcp_provider`, but connections are
+    /// established through `NodelayTcpProvider` (TCP_NODELAY
+    /// set right after connect — see its doc comment).
+    fn nodelay_tcp_provider(&self) -> Result<NodelayTcpProvider, MmErrorInfo> {
+        let ip_string = self.require_endpoint_ip()?;
+        let pairing_file = self.require_pairing_file()?;
+        let addr = parse_endpoint_ip(&ip_string)?;
+        Ok(NodelayTcpProvider {
+            addr,
+            pairing_file,
+            label: APP_NAME.to_string(),
+        })
+    }
+
     /// The M5 operations context (endpoint + pairing file).
     fn m5_ctx(&self) -> Result<crate::gw_idevice_ops::IdeviceCtx, MmErrorInfo> {
         let ip_string = self.require_endpoint_ip()?;
@@ -163,9 +226,10 @@ impl IdeviceGateway {
     }
 
     /// Connects a fresh lockdownd client over TCP (the lockdown
-    /// half of Swift `performWithEitherService`).
+    /// half of Swift `performWithEitherService`). Goes through
+    /// the NODELAY probe provider (see `NodelayTcpProvider`).
     async fn connect_lockdown(&self) -> Result<LockdownClient, MmErrorInfo> {
-        let provider = self.tcp_provider()?;
+        let provider = self.nodelay_tcp_provider()?;
         LockdownClient::connect(&provider).await.map_err(|e| {
             gw_error(
                 DeviceGatewayCode::ServiceError,
